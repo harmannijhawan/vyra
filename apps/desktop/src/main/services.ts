@@ -137,8 +137,9 @@ export const DEFAULT_SETTINGS: Record<string, Record<string, unknown>> = {
 };
 
 const ONBOARDING_STEPS = [
+  'welcome',
+  'google-api-key',
   'microphone',
-  'ai-provider',
   'voice',
   'computer-permissions',
   'browser',
@@ -297,8 +298,10 @@ export function createInMemoryServices(emit: EmitEvent): MainServices {
     },
     async completeOnboardingStep(step, values) {
       if (values && Object.keys(values).length > 0) {
-        // Persist any choices the step collected (e.g. provider ids).
+        // Persist any choices the step collected (e.g. provider ids) —
+        // but never secret values: API keys must not land in settings.
         for (const [k, v] of Object.entries(values)) {
+          if (/key/i.test(k)) continue;
           settings.general[k] = v;
         }
       }

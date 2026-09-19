@@ -136,7 +136,7 @@ export class VisionAdapter implements VisionProvider {
         ? 'gpt-4o-mini'
         : opts.backend === 'anthropic'
           ? 'claude-sonnet-4-5-20250929'
-          : 'gemini-2.5-flash');
+          : 'gemini-3-flash-preview');
   }
 
   private resolveKey(): string | undefined {

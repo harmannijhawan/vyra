@@ -92,11 +92,11 @@ export function loadEnvConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): VyraEnvConfig {
   return {
-    aiProvider: nonEmpty(env.VYRA_AI_PROVIDER, 'openai').toLowerCase(),
+    aiProvider: nonEmpty(env.VYRA_AI_PROVIDER, 'google').toLowerCase(),
     aiModel: nonEmpty(env.VYRA_AI_MODEL, ''),
     sttProvider: nonEmpty(env.VYRA_STT_PROVIDER, 'system').toLowerCase(),
     ttsProvider: nonEmpty(env.VYRA_TTS_PROVIDER, 'system').toLowerCase(),
-    visionProvider: nonEmpty(env.VYRA_VISION_PROVIDER, 'openai').toLowerCase(),
+    visionProvider: nonEmpty(env.VYRA_VISION_PROVIDER, 'google').toLowerCase(),
     ollamaBaseUrl: nonEmpty(env.OLLAMA_BASE_URL, 'http://localhost:11434'),
     dataDir: nonEmpty(env.VYRA_DATA_DIR, defaultDataDir()),
     logLevel: parseLogLevel(env.VYRA_LOG_LEVEL),

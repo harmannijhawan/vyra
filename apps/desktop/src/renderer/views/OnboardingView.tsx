@@ -11,7 +11,7 @@ interface StepDef {
   id: string;
   title: string;
   description: string;
-  fields?: Array<{ key: string; label: string; placeholder?: string }>;
+  fields?: Array<{ key: string; label: string; placeholder?: string; secret?: boolean }>;
 }
 
 const STEPS: StepDef[] = [
@@ -21,15 +21,23 @@ const STEPS: StepDef[] = [
     description: `${PRODUCT_TAGLINE} Let's get you set up — this takes about a minute.`,
   },
   {
+    id: 'google-api-key',
+    title: 'Connect Google Gemini',
+    description:
+      'VYRA runs on Google\u2019s Gemini API. Paste your API key below — grab a free one from Google AI Studio (aistudio.google.com). VYRA checks the key with Google before continuing.',
+    fields: [
+      {
+        key: 'googleApiKey',
+        label: 'Gemini API key',
+        placeholder: 'AIza\u2026',
+        secret: true,
+      },
+    ],
+  },
+  {
     id: 'microphone',
     title: 'Microphone',
     description: 'VYRA listens through your microphone. Make sure it is plugged in and not muted.',
-  },
-  {
-    id: 'ai-provider',
-    title: 'AI provider',
-    description: 'Choose the brain behind VYRA. You can change this any time in Settings.',
-    fields: [{ key: 'aiProviderId', label: 'Provider id', placeholder: 'e.g. openai' }],
   },
   {
     id: 'voice',
@@ -157,6 +165,9 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
               <div key={f.key}>
                 <label className="text-xs text-slate-400">{f.label}</label>
                 <input
+                  type={f.secret ? 'password' : 'text'}
+                  autoComplete="off"
+                  spellCheck={false}
                   value={fieldValues[f.key] ?? ''}
                   onChange={(e: ChangeEvent<HTMLInputElement>) =>
                     setFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))

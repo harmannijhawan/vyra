@@ -58,8 +58,9 @@ import {
 } from './services.js';
 
 const ONBOARDING_STEPS = [
+  'welcome',
+  'google-api-key',
   'microphone',
-  'ai-provider',
   'voice',
   'computer-permissions',
   'browser',
@@ -76,6 +77,73 @@ const PROVIDER_KINDS: ProviderKind[] = [
   'browser',
   'wakeword',
 ];
+
+/**
+ * API keys live in the main process only. They are persisted in a
+ * mode-600 `secrets.json` under the data directory (never in settings.json,
+ * never in logs, never sent to the renderer) and loaded back into
+ * `process.env` at startup so providers pick them up via readSecret().
+ */
+const SECRETS_FILE = 'secrets.json';
+
+function secretsPath(dataDir: string): string {
+  return path.join(dataDir, SECRETS_FILE);
+}
+
+function loadPersistedSecrets(dataDir: string): void {
+  try {
+    const raw = fs.readFileSync(secretsPath(dataDir), 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    for (const [name, value] of Object.entries(parsed)) {
+      if (typeof value === 'string' && value.length > 0 && !process.env[name]) {
+        process.env[name] = value;
+      }
+    }
+  } catch {
+    // No secrets saved yet — providers will honestly report missing keys.
+  }
+}
+
+function persistSecret(dataDir: string, name: string, value: string): void {
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(
+      fs.readFileSync(secretsPath(dataDir), 'utf8'),
+    ) as Record<string, unknown>;
+  } catch {
+    // No secrets file yet — start fresh.
+  }
+  existing[name] = value;
+  fs.writeFileSync(secretsPath(dataDir), JSON.stringify(existing), {
+    mode: 0o600,
+  });
+}
+
+/**
+ * Live-check a Gemini API key against Google's model list. Never throws:
+ * returns 'ok' when Google accepts the key, 'invalid' when Google rejects
+ * it, and 'unknown' when the check itself could not run (offline, timeout).
+ */
+async function validateGoogleApiKey(
+  key: string,
+): Promise<'ok' | 'invalid' | 'unknown'> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
+      { signal: controller.signal },
+    );
+    if (res.ok) return 'ok';
+    if (res.status === 400 || res.status === 401 || res.status === 403)
+      return 'invalid';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /** AIProvider stub used only when no AI provider is registered at all. */
 class NoAiProvider implements AIProvider {
@@ -152,6 +220,10 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   const env = loadEnvConfig();
   const dataDir = env.dataDir || app.getPath('userData');
   fs.mkdirSync(dataDir, { recursive: true });
+
+  // Keys saved during onboarding are loaded before providers are built,
+  // so a saved key takes effect on every launch without re-entering it.
+  loadPersistedSecrets(dataDir);
 
   const logger = new JsonlLogger({ dataDir, component: 'vyra-main' });
   const settings = new FileSettingsStore(path.join(dataDir, 'settings.json'));
@@ -444,6 +516,28 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
     async completeOnboardingStep(step, values) {
       const state = getOnboarding();
       if (values) {
+        const apiKey = values.googleApiKey;
+        if (typeof apiKey === 'string' && apiKey.trim().length > 0) {
+          const key = apiKey.trim();
+          const verdict = await validateGoogleApiKey(key);
+          if (verdict === 'invalid') {
+            throw Object.assign(
+              new Error(
+                'Google rejected that API key. Grab a fresh one from Google AI Studio (aistudio.google.com) and try again.',
+              ),
+              { code: 'INVALID_API_KEY' },
+            );
+          }
+          // The key works (or the check could not run offline) — keep it in
+          // the main process only, and make Google VYRA's brain and eyes.
+          process.env.GOOGLE_GENERATIVE_AI_KEY = key;
+          persistSecret(dataDir, 'GOOGLE_GENERATIVE_AI_KEY', key);
+          await services.selectProvider('ai', 'google');
+          await services.selectProvider('vision', 'google');
+          logger.info('onboarding.google-key', {
+            result: `saved (live verification: ${verdict})`,
+          });
+        }
         for (const [k, v] of Object.entries(values)) {
           if (k === 'sttProvider' || k === 'ttsProvider' || k === 'aiProvider') {
             const kind = k === 'aiProvider' ? 'ai' : k === 'sttProvider' ? 'stt' : 'tts';

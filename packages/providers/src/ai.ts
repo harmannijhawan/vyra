@@ -438,7 +438,7 @@ export class GoogleProvider implements AIProvider {
   ) {}
 
   private get model(): string {
-    return this.opts.model || process.env.VYRA_AI_MODEL || 'gemini-2.5-flash';
+    return this.opts.model || process.env.VYRA_AI_MODEL || 'gemini-3-flash-preview';
   }
 
   private get apiKey(): string | undefined {

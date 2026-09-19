@@ -114,4 +114,74 @@ describe('real backend wiring (wiring.ts)', () => {
     // On Linux nut.js cannot capture; honest null beats a fabricated image.
     expect(frame).toBeNull();
   });
+
+  it('onboarding starts at WELCOME TO VYRA on a fresh install', async () => {
+    const freshDir = mkdtempSync(join(tmpdir(), 'vyra-welcome-'));
+    const prev = process.env.VYRA_DATA_DIR;
+    process.env.VYRA_DATA_DIR = freshDir;
+    try {
+      const fresh = await createRealServices(() => {});
+      const state = await fresh.onboardingState();
+      expect(state.currentStep).toBe('welcome');
+      expect(state.completedSteps).toEqual([]);
+    } finally {
+      if (prev === undefined) delete process.env.VYRA_DATA_DIR;
+      else process.env.VYRA_DATA_DIR = prev;
+    }
+  });
+
+  it('onboarding: google-api-key step validates live, persists securely, selects Google', async () => {
+    const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
+    const secretsFile = join(userDataDir, 'secrets.json');
+    const settingsFile = join(userDataDir, 'settings.json');
+    // Google accepts the key (stubbed network).
+    vi.stubGlobal('fetch', async () => ({ ok: true, status: 200 }) as Response);
+    try {
+      delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      const { rmSync, readFileSync, existsSync } = await import('node:fs');
+      try { rmSync(secretsFile); } catch { /* fresh */ }
+      const state = await services.completeOnboardingStep('google-api-key', {
+        googleApiKey: 'AIza-test-key-123',
+      });
+      expect(state.completedSteps).toContain('google-api-key');
+      expect(state.currentStep).toBe('microphone');
+      // Key is live in the main-process environment for providers…
+      expect(process.env.GOOGLE_GENERATIVE_AI_KEY).toBe('AIza-test-key-123');
+      // …persisted to a secrets file…
+      expect(existsSync(secretsFile)).toBe(true);
+      const secrets = JSON.parse(readFileSync(secretsFile, 'utf8')) as Record<string, string>;
+      expect(secrets.GOOGLE_GENERATIVE_AI_KEY).toBe('AIza-test-key-123');
+      // …but never in settings.json, which the renderer can read.
+      expect(readFileSync(settingsFile, 'utf8')).not.toContain('AIza-test-key-123');
+      // …and Google is now VYRA's selected brain and eyes.
+      const statuses = await services.providersStatus();
+      expect(statuses.find((s) => s.kind === 'ai' && s.id === 'google')?.selected).toBe(true);
+      expect(statuses.find((s) => s.kind === 'vision' && s.id === 'google')?.selected).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      const { rmSync } = await import('node:fs');
+      try { rmSync(secretsFile); } catch { /* cleaned */ }
+      if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      else process.env.GOOGLE_GENERATIVE_AI_KEY = prevKey;
+    }
+  });
+
+  it('onboarding: a Google-rejected API key surfaces an honest error', async () => {
+    const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401 }) as Response);
+    try {
+      delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      await expect(
+        services.completeOnboardingStep('google-api-key', { googleApiKey: 'bad-key' }),
+      ).rejects.toThrow('Google rejected that API key');
+      // Rejected keys are never stored.
+      expect(process.env.GOOGLE_GENERATIVE_AI_KEY ?? '').not.toBe('bad-key');
+      const { existsSync } = await import('node:fs');
+      expect(existsSync(join(userDataDir, 'secrets.json'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      else process.env.GOOGLE_GENERATIVE_AI_KEY = prevKey;
+    }
+  });
 });

@@ -192,7 +192,8 @@ describe('loadEnvConfig', () => {
 
   it('applies sane defaults for an empty environment', () => {
     const config = loadEnvConfig({} as NodeJS.ProcessEnv);
-    expect(config.aiProvider).toBe('openai');
+    expect(config.aiProvider).toBe('google');
+    expect(config.visionProvider).toBe('google');
     expect(config.ollamaBaseUrl).toBe('http://localhost:11434');
     expect(config.logLevel).toBe('info');
     expect(config.pttHotkey).toBe('Ctrl+Space');

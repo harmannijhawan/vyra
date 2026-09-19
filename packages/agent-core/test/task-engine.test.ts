@@ -130,6 +130,12 @@ describe('TaskEngine', () => {
   });
 
   it('cancels a running task', async () => {
+    // Signal fired the moment the blocker tool actually starts, so the test
+    // cancels a genuinely running task instead of racing a fixed sleep.
+    let markToolStarted!: () => void;
+    const toolStarted = new Promise<void>((resolve) => {
+      markToolStarted = resolve;
+    });
     registry.register(
       {
         name: 'blocker',
@@ -139,6 +145,7 @@ describe('TaskEngine', () => {
         risk: 'safe',
       },
       async (_args, ctx) => {
+        markToolStarted();
         await new Promise<void>((_resolve, reject) => {
           ctx.signal.addEventListener('abort', () => reject(new Error('aborted')), {
             once: true,
@@ -157,7 +164,7 @@ describe('TaskEngine', () => {
     const task = await engine.createTask('block for a bit');
 
     const runPromise = engine.start(task.id);
-    await new Promise((r) => setTimeout(r, 50));
+    await toolStarted;
     await engine.cancel(task.id);
     const final = await runPromise;
 
