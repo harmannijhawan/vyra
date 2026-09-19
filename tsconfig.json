@@ -1,0 +1,1 @@
+{"compilerOptions":{"noEmit":true},"exclude":["**/node_modules","**/dist","**/out"],"extends":"./tsconfig.base.json","include":["apps/**/src/**/*","packages/*/src/**/*","packages/*/test/**/*","apps/*/test/**/*"]}

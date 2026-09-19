@@ -1,0 +1,1 @@
+{"description":"VYRA shared contracts — tools, tasks, providers, voice, events, IPC allowlist.","exports":{".":"./src/index.ts","./package.json":"./package.json"},"license":"UNLICENSED","main":"./src/index.ts","name":"@vyra/shared","private":true,"scripts":{"test":"vitest run","typecheck":"tsc --noEmit -p tsconfig.json"},"types":"./src/index.ts","version":"0.1.0"}
