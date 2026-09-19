@@ -1,0 +1,45 @@
+# VYRA — electron-builder packaging configuration.
+#
+# IMPORTANT: the Windows .exe installer MUST be built on Windows.
+# `npm run dist` on this Linux build/CI machine can only validate this
+# config (see packages/providers/test/builder-config.test.ts); the actual
+# NSIS installer (VYRA-Setup-<version>.exe) is produced by running the
+# build on a Windows 10/11 machine or Windows CI runner.
+
+appId: com.vyra.app
+productName: VYRA
+artifactName: VYRA-Setup-${version}.${ext}
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
+  - package.json
+  # Production dependencies resolve at runtime from node_modules (native
+  # modules, Playwright drivers). electron-builder prunes devDependencies.
+  # In this npm-workspaces monorepo the dependencies are hoisted to the
+  # workspace root; electron-builder follows the workspace layout.
+  - node_modules/**/*
+  - '!node_modules/.bin{,/**/*}'
+  - '!**/*.md'
+
+# Native modules cannot load from inside the asar archive.
+asarUnpack:
+  - '**/*.node'
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: VYRA
+  perMachine: false

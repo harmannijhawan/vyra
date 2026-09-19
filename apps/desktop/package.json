@@ -1,0 +1,49 @@
+{
+  "author": "Harman Nijhawan",
+  "dependencies": {
+    "@vyra/agent-core": "*",
+    "@vyra/memory": "*",
+    "@vyra/observability": "*",
+    "@vyra/providers": "*",
+    "@vyra/safety": "*",
+    "@vyra/shared": "*",
+    "@vyra/tools": "*",
+    "@vyra/voice": "*",
+    "electron": "^44.4.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "^4.6.5"
+  },
+  "description": "VYRA \u2014 Your PC. Your Voice. Your AI. Desktop app for Windows 10/11.",
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  },
+  "license": "UNLICENSED",
+  "main": "dist/main/main.js",
+  "name": "vyra-desktop",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer",
+    "build:main": "node esbuild.config.mjs main",
+    "build:preload": "node esbuild.config.mjs preload",
+    "build:renderer": "vite build",
+    "dev": "node esbuild.config.mjs && (vite --port 5173 & electron .)",
+    "dev:electron": "electron .",
+    "dev:renderer": "vite --port 5173",
+    "dist": "npm run build && electron-builder",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "version": "0.1.0"
+}

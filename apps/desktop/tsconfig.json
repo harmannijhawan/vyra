@@ -1,0 +1,1 @@
+{"compilerOptions":{"jsx":"react-jsx","noEmit":true,"types":["node","vite/client"]},"extends":"../../tsconfig.base.json","include":["src/**/*","test/**/*","vite.config.ts","vite.main.config.ts","vite.preload.config.ts","vitest.config.ts"]}
