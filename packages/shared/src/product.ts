@@ -7,7 +7,6 @@
  */
 export const PRODUCT_NAME = 'VYRA' as const;
 export const PRODUCT_TAGLINE = 'Your PC. Your Voice. Your AI.' as const;
-export const PRODUCT_SUBTITLE = 'VoiceOS Intelligence' as const;
 export const PRODUCT_VERSION = '0.1.0' as const;
 
 /** Canonical "VYRA is …" product-language phrases used across UI + voice. */
