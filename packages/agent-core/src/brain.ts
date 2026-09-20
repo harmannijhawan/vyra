@@ -64,6 +64,8 @@ export interface BrainOptions {
   registry: ToolRegistry;
   vision?: VisionProvider;
   computer?: ComputerProvider;
+  /** Facts about the user (name, preferences) — appended to the system prompt. */
+  userFacts?: string;
   onEvent?: (event: Omit<AgentEvent, 'timestamp'>) => void;
 }
 
@@ -94,6 +96,13 @@ export class Brain {
       observe: () => this.observe(),
       onEvent: opts.onEvent,
     });
+  }
+
+  /** System prompt plus any known facts about the user (never secrets). */
+  private systemPrompt(): string {
+    const facts = this.opts.userFacts?.trim();
+    if (!facts) return VYRA_SYSTEM_PROMPT;
+    return `${VYRA_SYSTEM_PROMPT}\n\nFacts about the user (use them; never reveal them unprompted):\n${facts}`;
   }
 
   private emit(event: Omit<AgentEvent, 'timestamp'>): void {
@@ -140,7 +149,7 @@ export class Brain {
     }));
 
     const messages: ChatMessage[] = [
-      { role: 'system', content: VYRA_SYSTEM_PROMPT },
+      { role: 'system', content: this.systemPrompt() },
       {
         role: 'user',
         content:
@@ -340,7 +349,7 @@ export class Brain {
 
     const response = await this.opts.ai.chat(
       [
-        { role: 'system', content: VYRA_SYSTEM_PROMPT },
+        { role: 'system', content: this.systemPrompt() },
         {
           role: 'user',
           content:

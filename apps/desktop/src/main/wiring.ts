@@ -317,11 +317,34 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   );
 
   // --- Brain + task engine ---------------------------------------------------
+  // Long-term memory lives here; the Brain gets the user's identity facts
+  // so it knows who it serves (e.g. their name) without being told twice.
+  const memory = new SQLiteMemory(path.join(dataDir, 'vyra-memory.db'), {
+    emit: (event) => timedEmit(event),
+  });
+  // Seed the user's identity once — never overwrites a name the user set
+  // themselves through Memory tools.
+  try {
+    const hasName = memory
+      .recall({ query: 'user.name', limit: 5 })
+      .some((r) => r.key === 'user.name');
+    if (!hasName) {
+      memory.remember('user.name', 'Harman Nijhawan', 'identity');
+    }
+  } catch {
+    // Memory is a convenience, never a startup blocker.
+  }
+  const userFacts = memory
+    .recall({ category: 'identity', limit: 20 })
+    .map((r) => `- ${r.key}: ${r.value}`)
+    .join('\n');
+
   const brain = new Brain({
     ai: aiProvider,
     registry: toolRegistry,
     vision: visionProvider ?? undefined,
     computer,
+    userFacts,
     onEvent: untimedEmit,
   });
 
@@ -389,9 +412,7 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   });
 
   // --- Memory ----------------------------------------------------------------
-  const memory = new SQLiteMemory(path.join(dataDir, 'vyra-memory.db'), {
-    emit: (event) => timedEmit(event),
-  });
+  // (created above so the Brain can read identity facts at startup)
   const session = new SessionContext();
   void session;
 
@@ -559,7 +580,12 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
         );
       }
       const history: ChatMessage[] = [
-        { role: 'system', content: VYRA_CHAT_SYSTEM_PROMPT },
+        {
+          role: 'system',
+          content:
+            VYRA_CHAT_SYSTEM_PROMPT +
+            (userFacts ? `\nFacts about the user (use them; never reveal them unprompted):\n${userFacts}` : ''),
+        },
         ...messages.slice(-20).map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
