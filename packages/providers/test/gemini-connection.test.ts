@@ -78,6 +78,14 @@ describe('geminiFailureMessage', () => {
     expect(geminiFailureMessage(429, '').message).toContain('rate-limiting');
   });
 
+  it('tells the user to enter a different model on 404 (no false auto-pick promise)', () => {
+    const f = geminiFailureMessage(404, 'gemini-2.5-flash');
+    expect(f.code).toBe('model-not-found');
+    expect(f.message).toContain('gemini-2.5-flash');
+    expect(f.message).toContain('different model');
+    expect(f.message).not.toContain('pick a working model automatically');
+  });
+
   it('maps missing responses to network', () => {
     const f = geminiFailureMessage(null, '');
     expect(f.code).toBe('network');
@@ -193,5 +201,25 @@ describe('testGeminiConnection', () => {
     const result = await testGeminiConnection('k');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('unknown');
+  });
+
+  it('honors an explicit model override instead of auto-picking', async () => {
+    const urls = stubFetch([
+      { status: 200, body: FLASH_MODELS_RESPONSE },
+      { status: 200, body: generateOk() },
+    ]);
+    const result = await testGeminiConnection('k', { model: 'gemini-3.1-pro-preview' });
+    expect(result).toEqual({ ok: true, model: 'gemini-3.1-pro-preview' });
+    expect(urls[1]).toContain('/models/gemini-3.1-pro-preview:generateContent');
+  });
+
+  it('falls back to auto-pick when the override cannot generate', async () => {
+    const urls = stubFetch([
+      { status: 200, body: FLASH_MODELS_RESPONSE },
+      { status: 200, body: generateOk() },
+    ]);
+    const result = await testGeminiConnection('k', { model: 'gemini-embedding-001' });
+    expect(result).toEqual({ ok: true, model: 'gemini-3-flash-preview' });
+    expect(urls[1]).toContain('/models/gemini-3-flash-preview:generateContent');
   });
 });

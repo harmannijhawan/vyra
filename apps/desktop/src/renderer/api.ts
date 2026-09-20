@@ -173,8 +173,9 @@ export async function completeOnboardingStep(
  */
 export async function testGoogleConnection(
   apiKey: string,
+  model?: string,
 ): Promise<GeminiConnectionResult> {
-  return invoke('vyra:onboarding:test-google-key', { apiKey });
+  return invoke('vyra:onboarding:test-google-key', { apiKey, model });
 }
 
 /**

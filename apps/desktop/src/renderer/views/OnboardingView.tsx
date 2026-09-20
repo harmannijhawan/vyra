@@ -93,6 +93,7 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
 
   // Google key step state — the key is never displayed back after saving.
   const [apiKey, setApiKey] = useState('');
+  const [model, setModel] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [testState, setTestState] = useState<KeyTestState>('idle');
   const [testMessage, setTestMessage] = useState<string | null>(null);
@@ -149,7 +150,7 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
     setTestMessage(null);
     setError(null);
     try {
-      const result = await testGoogleConnection(key);
+      const result = await testGoogleConnection(key, model.trim() || undefined);
       if (result.ok) {
         setTestState('success');
         setTestMessage(result.model);
@@ -174,7 +175,20 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
       return;
     }
     // The main process re-tests live and saves ONLY on success.
-    void complete('google-api-key', { googleApiKey: key });
+    const preferredModel = model.trim();
+    void complete(
+      'google-api-key',
+      preferredModel ? { googleApiKey: key, preferredModel } : { googleApiKey: key },
+    );
+  };
+
+  const onModelChange = (value: string): void => {
+    setModel(value);
+    // A changed model invalidates any earlier test result.
+    if (testState === 'success' || testState === 'failure') {
+      setTestState('idle');
+      setTestMessage(null);
+    }
   };
 
   const onApiKeyChange = (value: string): void => {
@@ -314,6 +328,28 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
             >
               Get a free key at Google AI Studio ↗
             </button>
+
+            <label
+              htmlFor="vyra-model"
+              className="mt-4 block text-xs font-medium text-slate-400"
+            >
+              Model <span className="font-normal text-slate-600">(optional)</span>
+            </label>
+            <input
+              id="vyra-model"
+              type="text"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              value={model}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => onModelChange(e.target.value)}
+              placeholder="Auto — VYRA picks a working model"
+              disabled={testing || busy}
+              className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-vyra-accent focus:outline-none disabled:opacity-60"
+            />
+            <p className="mt-1 text-xs text-slate-600">
+              e.g. gemini-3.5-flash-lite. Leave empty and VYRA picks one automatically.
+            </p>
 
             {testState === 'testing' && (
               <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-black/30 px-4 py-3">

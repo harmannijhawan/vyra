@@ -86,6 +86,7 @@ export const ChatSendSchema = z.object({
 
 export const GoogleKeyTestSchema = z.object({
   apiKey: z.string().min(1).max(500),
+  model: z.string().min(1).max(120).optional(),
 });
 
 export const OpenExternalSchema = z.object({

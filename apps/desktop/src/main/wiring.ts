@@ -539,10 +539,11 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
       safety.handleResponse(requestId, approved);
     },
 
-    async testGoogleConnection(apiKey: string): Promise<GeminiConnectionResult> {
+    async testGoogleConnection(apiKey: string, model?: string): Promise<GeminiConnectionResult> {
       // Dry-run only: validates the key + model against Google's live API
       // without saving anything. Powers the "Test Connection" button.
-      return testGeminiConnection(apiKey.trim());
+      // An explicit model overrides the automatic pick.
+      return testGeminiConnection(apiKey.trim(), model ? { model } : undefined);
     },
 
     async chatSend(messages: ChatMessageInput[]): Promise<ChatReply> {

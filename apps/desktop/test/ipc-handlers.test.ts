@@ -165,4 +165,23 @@ describe('registerIpcHandlers', () => {
     });
     expect(good).toEqual({ ok: true, data: { requestId: 'r1', approved: true } });
   });
+
+  it('passes the model override through the google-key test channel', async () => {
+    const seen: Array<{ apiKey: string; model?: string }> = [];
+    const { ipcMain } = setup({
+      testGoogleConnection: async (apiKey: string, model?: string) => {
+        seen.push({ apiKey, model });
+        return { ok: true as const, model: model ?? 'auto' };
+      },
+    });
+    const res = await call(ipcMain, 'vyra:onboarding:test-google-key', {
+      apiKey: 'k',
+      model: 'gemini-3.5-flash-lite',
+    });
+    expect(res.ok).toBe(true);
+    expect(seen).toEqual([{ apiKey: 'k', model: 'gemini-3.5-flash-lite' }]);
+    const auto = await call(ipcMain, 'vyra:onboarding:test-google-key', { apiKey: 'k' });
+    expect(auto.ok).toBe(true);
+    expect(seen[1]).toEqual({ apiKey: 'k', model: undefined });
+  });
 });

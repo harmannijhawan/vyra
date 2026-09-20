@@ -94,7 +94,7 @@ export interface MainServices {
   onboardingState(): Promise<OnboardingState>;
   completeOnboardingStep(step: string, values?: Record<string, unknown>): Promise<OnboardingState>;
   /** Dry-run Gemini connection test — validates without saving anything. */
-  testGoogleConnection(apiKey: string): Promise<GeminiConnectionResult>;
+  testGoogleConnection(apiKey: string, model?: string): Promise<GeminiConnectionResult>;
   /** Conversational chat — a real AI reply, not a task plan. */
   chatSend(messages: ChatMessageInput[]): Promise<ChatReply>;
   // Logs

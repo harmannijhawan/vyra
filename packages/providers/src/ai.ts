@@ -691,7 +691,7 @@ export function geminiFailureMessage(
   if (status === 404) {
     return {
       code: 'model-not-found',
-      message: `That Gemini model is not available for this key (${detail}). Test the connection again and VYRA will pick a working model automatically.`,
+      message: `That Gemini model is not available for this key (${detail}). Enter a different model name and test again (e.g. gemini-3.5-flash-lite).`,
     };
   }
   if (status === 429) {

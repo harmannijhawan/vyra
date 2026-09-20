@@ -198,6 +198,70 @@ describe('real backend wiring (wiring.ts)', () => {
     }
   });
 
+  it('onboarding: preferredModel override is tested and persisted instead of auto-pick', async () => {
+    const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
+    const prevModel = process.env.VYRA_AI_MODEL;
+    const secretsFile = join(userDataDir, 'secrets.json');
+    const seenUrls: string[] = [];
+    // The key lists gemini-2.5-flash first, but the user asked for
+    // gemini-3.5-flash-lite — the test must use the override.
+    vi.stubGlobal('fetch', async (url: unknown) => {
+      seenUrls.push(String(url));
+      if (String(url).includes(':generateContent')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ candidates: [{ content: { parts: [{ text: 'VYRA-OK' }] } }] }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            models: [
+              {
+                name: 'models/gemini-2.5-flash',
+                supportedGenerationMethods: ['generateContent'],
+              },
+              {
+                name: 'models/gemini-3.5-flash-lite',
+                supportedGenerationMethods: ['generateContent'],
+              },
+            ],
+          }),
+      } as Response;
+    });
+    try {
+      delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      delete process.env.VYRA_AI_MODEL;
+      const { rmSync } = await import('node:fs');
+      try { rmSync(secretsFile); } catch { /* fresh */ }
+      const state = await services.completeOnboardingStep('google-api-key', {
+        googleApiKey: '<redacted>',
+        preferredModel: 'gemini-3.5-flash-lite',
+      });
+      expect(state.completedSteps).toContain('google-api-key');
+      // The generation probe hit the override, not the auto-pick.
+      const genUrl = seenUrls.find((u) => u.includes(':generateContent'));
+      expect(genUrl).toContain('/models/gemini-3.5-flash-lite:generateContent');
+      // The working model is the override everywhere it matters.
+      expect(process.env.VYRA_AI_MODEL).toBe('gemini-3.5-flash-lite');
+      expect((await services.getSettingsSection('models')).defaultModel).toBe(
+        'gemini-3.5-flash-lite',
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      const { rmSync } = await import('node:fs');
+      try { rmSync(secretsFile); } catch { /* cleaned */ }
+      if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      else process.env.GOOGLE_GENERATIVE_AI_KEY = prevKey;
+      if (prevModel === undefined) delete process.env.VYRA_AI_MODEL;
+      else process.env.VYRA_AI_MODEL = prevModel;
+    }
+  });
+
   it('chat: selecting Google after startup routes chat to Google (no stale provider)', async () => {
     // Regression test for the "valid key, still broken" bug: the AI provider
     // used to be captured once at startup, so a provider selected later

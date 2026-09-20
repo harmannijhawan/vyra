@@ -219,8 +219,8 @@ export function registerIpcHandlers(
     return services.completeOnboardingStep(step, values);
   });
   handle('vyra:onboarding:test-google-key', async (p) => {
-    const { apiKey } = p as GoogleKeyTestPayload;
-    return services.testGoogleConnection(apiKey);
+    const { apiKey, model } = p as GoogleKeyTestPayload;
+    return services.testGoogleConnection(apiKey, model);
   });
 
   // --- Logs ------------------------------------------------------------

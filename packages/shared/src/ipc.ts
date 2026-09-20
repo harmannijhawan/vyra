@@ -149,6 +149,8 @@ export interface OnboardingStepPayload {
 /** Dry-run Gemini key test (nothing is saved). */
 export interface GoogleKeyTestPayload {
   apiKey: string;
+  /** Optional model override (without the "models/" prefix). Omit for auto-pick. */
+  model?: string;
 }
 export interface LogsQueryPayload {
   level?: string;
