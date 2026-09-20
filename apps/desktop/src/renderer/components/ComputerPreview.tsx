@@ -4,7 +4,7 @@
  * No frame → honest empty state, never a placeholder image.
  */
 import { useEffect, useRef, useState } from 'react';
-import { latestComputerFrame, VyraError } from '../api';
+import { getProvidersStatus, latestComputerFrame, VyraError } from '../api';
 import type { ComputerFrame } from '../../main/services.js';
 import { timeAgo } from '../lib/format';
 
@@ -14,6 +14,7 @@ export function ComputerPreview({ active }: { active: boolean }): JSX.Element {
   const [frame, setFrame] = useState<ComputerFrame | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [failed, setFailed] = useState(false);
+  const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -33,6 +34,24 @@ export function ComputerPreview({ active }: { active: boolean }): JSX.Element {
           setFrame(next);
           setFailed(false);
           setNow(Date.now());
+          if (!next) {
+            // No frame — surface the REAL reason instead of a generic message.
+            try {
+              const statuses = await getProvidersStatus();
+              const computer = statuses.find((s) => s.kind === 'computer');
+              if (!cancelled) {
+                setUnavailableReason(
+                  computer && !computer.available
+                    ? (computer.reason ?? 'Computer control is unavailable.')
+                    : null,
+                );
+              }
+            } catch {
+              if (!cancelled) setUnavailableReason(null);
+            }
+          } else {
+            setUnavailableReason(null);
+          }
         }
       } catch (err) {
         // A missing engine surfaces here — show the honest empty state.
@@ -58,9 +77,11 @@ export function ComputerPreview({ active }: { active: boolean }): JSX.Element {
     return (
       <div className="flex h-full min-h-[220px] items-center justify-center rounded-xl border border-white/5 bg-white/[0.02] p-8 text-center">
         <div>
-          <p className="text-sm text-slate-300">No computer preview available.</p>
+          <p className="text-sm text-slate-300">
+            {failed ? 'Computer preview unavailable.' : 'No computer preview available.'}
+          </p>
           <p className="mt-1 text-xs text-slate-500">
-            VYRA will show the live screen here while it works on your computer.
+            {unavailableReason ?? 'VYRA will show the live screen here while it works on your computer.'}
           </p>
         </div>
       </div>
