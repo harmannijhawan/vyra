@@ -15,6 +15,7 @@ import {
   type VoiceStatePayload,
 } from '@vyra/shared';
 import { getOnboardingState, onEvent, VyraError } from './api';
+import { useSpokenReplies } from './lib/useSpokenReplies';
 import type { OnboardingState } from '../main/services.js';
 import { AssistantView } from './views/AssistantView';
 import { TasksView } from './views/TasksView';
@@ -47,6 +48,9 @@ export function App(): JSX.Element {
   const [safetyRequests, setSafetyRequests] = useState<SafetyConfirmRequestPayload[]>([]);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const onboardingLoaded = useRef(false);
+
+  // VYRA reads task results aloud (Puter/ElevenLabs) when voice output is on.
+  useSpokenReplies();
 
   const loadOnboarding = useCallback(async () => {
     try {

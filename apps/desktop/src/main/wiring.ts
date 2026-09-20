@@ -344,7 +344,16 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   } catch { /* keep default */ }
   try {
     const ttsId = String(settings.getSection('voice').ttsProvider ?? '');
-    if (ttsId && ttsId !== 'none') ttsService.select(ttsId);
+    // 'puter' is renderer-side (Puter.js runs in the app window); the
+    // main-process TTS registry only holds key-based providers. Unknown ids
+    // are left alone instead of crashing wiring.
+    if (ttsId && ttsId !== 'none') {
+      try {
+        ttsService.select(ttsId);
+      } catch {
+        /* renderer-side provider — selection happens in the UI layer */
+      }
+    }
   } catch { /* keep default */ }
 
   const voiceService = new VoiceService({

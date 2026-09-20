@@ -15,6 +15,7 @@ import type {
   OnboardingState,
   ProviderStatusInfo,
 } from '../main/services.js';
+import { stopPuterSpeech } from './lib/puterTts.js';
 
 export interface IpcError {
   code: string;
@@ -98,6 +99,9 @@ export async function pushToTalk(active: boolean): Promise<void> {
 }
 
 export async function interruptSpeech(): Promise<void> {
+  // Stop renderer-side Puter speech first — the main-process interrupt only
+  // knows about main-process providers. Both are best-effort.
+  stopPuterSpeech();
   await invoke('vyra:voice:interrupt');
 }
 

@@ -44,7 +44,8 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     description: 'Speech input, output and the push-to-talk hotkey.',
     fields: [
       { key: 'sttProvider', label: 'Speech-to-text provider', type: 'text', placeholder: 'e.g. whisper-local', description: 'Provider id for transcription.' },
-      { key: 'ttsProvider', label: 'Text-to-speech provider', type: 'text', placeholder: 'e.g. piper-local', description: 'Provider id for spoken replies.' },
+      { key: 'ttsProvider', label: 'Text-to-speech provider', type: 'select', options: ['puter', 'elevenlabs', 'openai', 'azure', 'none'], description: 'Puter speaks with ElevenLabs voices and needs no API key.' },
+      { key: 'speakReplies', label: 'Speak replies aloud', type: 'boolean', description: 'VYRA reads task results out loud when a task finishes.' },
       { key: 'microphoneId', label: 'Microphone', type: 'text', placeholder: 'Default system microphone', description: 'Device id; blank uses the system default.' },
       { key: 'pushToTalkEnabled', label: 'Push-to-talk enabled', type: 'boolean' },
       { key: 'pushToTalkHotkey', label: 'Push-to-talk hotkey', type: 'text', placeholder: 'CommandOrControl+Shift+V', description: 'Global shortcut. Takes effect immediately after saving.' },

@@ -19,6 +19,11 @@ const WINDOW_HEIGHT = 800;
 const BACKGROUND_COLOR = '#0a0e14';
 const DEV_SERVER_URL = 'http://localhost:5173';
 
+// Puter.js plays ElevenLabs audio from the renderer without a prior click
+// (spoken task replies). Chromium blocks that by default; VYRA is a
+// voice-first app, so playback without a user gesture is intended behavior.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 let mainWindow: BrowserWindow | null = null;
 
 /** Forward one AgentEvent to every renderer window (single multiplexed channel). */
@@ -47,6 +52,21 @@ function createWindow(): void {
   });
 
   mainWindow.setMenu(null);
+
+  // Puter's first-use sign-in opens a popup to puter.com. Allow popups only
+  // to Puter's own origins (the auth flow); everything else stays denied so
+  // web content can't spawn windows.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (host === 'puter.com' || host.endsWith('.puter.com')) {
+        return { action: 'allow' };
+      }
+    } catch {
+      // Malformed URL — deny below.
+    }
+    return { action: 'deny' };
+  });
 
   // Dev: prefer the Vite dev server when it is up; otherwise (packaged or
   // dev server not started) fall back to the bundled renderer.

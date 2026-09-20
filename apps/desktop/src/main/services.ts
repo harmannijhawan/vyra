@@ -96,7 +96,8 @@ export const DEFAULT_SETTINGS: Record<string, Record<string, unknown>> = {
   },
   voice: {
     sttProvider: 'none',
-    ttsProvider: 'none',
+    ttsProvider: 'puter',
+    speakReplies: true,
     pushToTalkEnabled: true,
     pushToTalkHotkey: 'CommandOrControl+Shift+V',
     wakeWordEnabled: false,

@@ -1,6 +1,7 @@
 {
   "author": "Harman Nijhawan",
   "dependencies": {
+    "@heyputer/puter.js": "^2.6.3",
     "@vyra/agent-core": "*",
     "@vyra/memory": "*",
     "@vyra/observability": "*",
@@ -45,5 +46,24 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "build": {
+    "appId": "com.vyra.app",
+    "productName": "VYRA",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "VYRA"
+    }
+  }
 }
