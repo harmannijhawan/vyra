@@ -78,6 +78,8 @@ export interface IpcHooks {
   onSettingsChanged?: (section: string) => void;
   /** Called after vyra:app:quit succeeds (main performs the actual quit). */
   onQuitRequested?: () => void;
+  /** Reports whether the real backend wired up, and why not. */
+  getBackendStatus?: () => { ok: boolean; error?: string };
 }
 
 /**
@@ -246,5 +248,10 @@ export function registerIpcHandlers(
     const { shell } = await import('electron');
     await shell.openExternal(parsed.toString());
     return { opened: true };
+  });
+  handle('vyra:app:backend-status', async () => {
+    // Honest backend health: whether the real services wired up, and the
+    // exact wiring failure when they did not.
+    return hooks.getBackendStatus?.() ?? { ok: true };
   });
 }

@@ -128,10 +128,12 @@ async function bootstrap(): Promise<void> {
   // honest in-memory implementation and reports the failure loudly —
   // it never pretends the backend is connected.
   let services;
+  let backendError: string | null = null;
   try {
     services = await createRealServices(emit);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    backendError = message;
     console.error('[vyra] Backend wiring failed, using in-memory fallback:', message);
     services = createInMemoryServices(emit);
     const at = new Date().toISOString();
@@ -187,6 +189,10 @@ async function bootstrap(): Promise<void> {
     onQuitRequested: () => {
       app.quit();
     },
+    getBackendStatus: () => ({
+      ok: backendError === null,
+      ...(backendError === null ? {} : { error: backendError }),
+    }),
   });
 
   // Initial hotkey registration from stored settings.

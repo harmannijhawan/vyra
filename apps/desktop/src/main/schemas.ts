@@ -131,4 +131,5 @@ export const CHANNEL_SCHEMAS: Record<InvokeChannel, z.ZodTypeAny | null> = {
   'vyra:app:version': null,
   'vyra:app:quit': null,
   'vyra:app:open-external': OpenExternalSchema,
+  'vyra:app:backend-status': null,
 };

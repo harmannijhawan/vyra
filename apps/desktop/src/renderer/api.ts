@@ -198,6 +198,15 @@ export async function getAppVersion(): Promise<string> {
   return res.version;
 }
 
+export interface BackendStatus {
+  ok: boolean;
+  error?: string;
+}
+
+export async function getBackendStatus(): Promise<BackendStatus> {
+  return invoke<BackendStatus>('vyra:app:backend-status');
+}
+
 export async function quitApp(): Promise<void> {
   await invoke('vyra:app:quit');
 }

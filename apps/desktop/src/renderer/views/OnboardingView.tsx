@@ -9,11 +9,12 @@
  * No secrets are ever displayed back and none are stored until the live
  * test succeeds — that guarantee lives in the main process.
  */
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import { Orb } from '../components/Orb.js';
 import { VoiceState } from '@vyra/shared';
 import {
   completeOnboardingStep,
+  getBackendStatus,
   openExternal,
   testGoogleConnection,
   VyraError,
@@ -97,6 +98,22 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
   const [showKey, setShowKey] = useState(false);
   const [testState, setTestState] = useState<KeyTestState>('idle');
   const [testMessage, setTestMessage] = useState<string | null>(null);
+  // Exact backend wiring failure, when the app fell back to limited mode.
+  const [backendError, setBackendError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getBackendStatus()
+      .then((status) => {
+        if (!cancelled && !status.ok) setBackendError(status.error ?? 'Unknown backend failure.');
+      })
+      .catch(() => {
+        /* the key test itself reports backend problems */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const step = STEPS[index];
   const isLast = index === STEPS.length - 1;
@@ -281,6 +298,16 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
           <p className="mx-auto mt-4 max-w-md text-center text-sm leading-relaxed text-slate-400">
             {step.description}
           </p>
+
+          {backendError && (
+            <div className="mx-auto mt-4 max-w-md rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-left">
+              <p className="text-sm font-medium text-amber-200">VYRA started with limited capabilities.</p>
+              <p className="mt-1 break-words text-xs text-amber-200/80">{backendError}</p>
+              <p className="mt-2 text-xs text-amber-200/60">
+                Send this message to support — restarting alone will not fix it.
+              </p>
+            </div>
+          )}
 
           <div className="mx-auto mt-6 max-w-md">
             <label className="text-xs text-slate-400" htmlFor="vyra-api-key">

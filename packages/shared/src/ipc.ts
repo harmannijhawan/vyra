@@ -52,6 +52,7 @@ export const INVOKE_CHANNELS = [
   'vyra:app:version',
   'vyra:app:quit',
   'vyra:app:open-external',
+  'vyra:app:backend-status',
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -92,6 +93,7 @@ export const INVOKE_PAYLOAD_SCHEMAS: Record<InvokeChannel, string> = {
   'vyra:logs:query': 'LogsQuery',
   'vyra:app:version': 'none',
   'vyra:app:quit': 'none',
+  'vyra:app:backend-status': 'none',
   'vyra:app:open-external': 'OpenExternal',
 };
 
