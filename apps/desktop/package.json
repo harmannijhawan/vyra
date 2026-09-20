@@ -10,7 +10,6 @@
     "@vyra/shared": "*",
     "@vyra/tools": "*",
     "@vyra/voice": "*",
-    "electron": "^44.4.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "zod": "^4.6.5"
@@ -27,7 +26,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^8.3.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.1",
+    "electron": "^44.4.3"
   },
   "license": "UNLICENSED",
   "main": "dist/main/main.js",
