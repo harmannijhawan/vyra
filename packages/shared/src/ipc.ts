@@ -19,6 +19,8 @@ export const INVOKE_CHANNELS = [
   'vyra:task:cancel',
   'vyra:task:list',
   'vyra:task:get',
+  // Chat
+  'vyra:chat:send',
   // Voice
   'vyra:voice:start-listening',
   'vyra:voice:stop',
@@ -43,11 +45,13 @@ export const INVOKE_CHANNELS = [
   // Onboarding
   'vyra:onboarding:get-state',
   'vyra:onboarding:complete-step',
+  'vyra:onboarding:test-google-key',
   // Logs
   'vyra:logs:query',
   // App
   'vyra:app:version',
   'vyra:app:quit',
+  'vyra:app:open-external',
 ] as const;
 
 export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
@@ -66,6 +70,7 @@ export const INVOKE_PAYLOAD_SCHEMAS: Record<InvokeChannel, string> = {
   'vyra:task:cancel': 'TaskId',
   'vyra:task:list': 'TaskListQuery',
   'vyra:task:get': 'TaskId',
+  'vyra:chat:send': 'ChatSend',
   'vyra:voice:start-listening': 'none',
   'vyra:voice:stop': 'none',
   'vyra:voice:push-to-talk': 'PushToTalk',
@@ -83,9 +88,11 @@ export const INVOKE_PAYLOAD_SCHEMAS: Record<InvokeChannel, string> = {
   'vyra:safety:respond': 'SafetyRespond',
   'vyra:onboarding:get-state': 'none',
   'vyra:onboarding:complete-step': 'OnboardingStep',
+  'vyra:onboarding:test-google-key': 'GoogleKeyTest',
   'vyra:logs:query': 'LogsQuery',
   'vyra:app:version': 'none',
   'vyra:app:quit': 'none',
+  'vyra:app:open-external': 'OpenExternal',
 };
 
 /** Payload shapes (validated with zod in main; mirrored here for typing). */
@@ -139,8 +146,22 @@ export interface OnboardingStepPayload {
   step: string;
   values?: Record<string, unknown>;
 }
+/** Dry-run Gemini key test (nothing is saved). */
+export interface GoogleKeyTestPayload {
+  apiKey: string;
+}
 export interface LogsQueryPayload {
   level?: string;
   taskId?: string;
   limit?: number;
+}
+
+/** Open a URL in the user's browser (https only, validated in main). */
+export interface OpenExternalPayload {
+  url: string;
+}
+
+/** Conversational chat message batch (system prompts stay server-side). */
+export interface ChatSendPayload {
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
 }

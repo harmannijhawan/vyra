@@ -13,6 +13,7 @@ import type {
   StructuredLog,
   Task,
 } from '@vyra/shared';
+import type { GeminiConnectionResult } from '@vyra/providers';
 
 /** One remembered fact, as returned by memoryRecall(). */
 export interface MemoryEntry {
@@ -20,6 +21,18 @@ export interface MemoryEntry {
   value: string;
   category?: string;
   updatedAt: string;
+}
+
+/** One message in a conversational chat (system prompts stay server-side). */
+export interface ChatMessageInput {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** VYRA's reply to a chat message. */
+export interface ChatReply {
+  text: string;
+  model: string;
 }
 
 /** Honest provider availability report for the Settings UI. */
@@ -80,6 +93,10 @@ export interface MainServices {
   // Onboarding
   onboardingState(): Promise<OnboardingState>;
   completeOnboardingStep(step: string, values?: Record<string, unknown>): Promise<OnboardingState>;
+  /** Dry-run Gemini connection test — validates without saving anything. */
+  testGoogleConnection(apiKey: string): Promise<GeminiConnectionResult>;
+  /** Conversational chat — a real AI reply, not a task plan. */
+  chatSend(messages: ChatMessageInput[]): Promise<ChatReply>;
   // Logs
   queryLogs(query: { level?: string; taskId?: string; limit?: number }): Promise<StructuredLog[]>;
   // App
@@ -292,6 +309,23 @@ export function createInMemoryServices(emit: EmitEvent): MainServices {
         timestamp: new Date().toISOString(),
         payload: { requestId, approved },
       });
+    },
+
+    async testGoogleConnection(_apiKey: string): Promise<GeminiConnectionResult> {
+      // The in-memory fallback has no real backend: say so honestly instead
+      // of pretending to test.
+      return {
+        ok: false,
+        code: 'unknown',
+        message:
+          'VYRA started with limited capabilities, so the connection cannot be tested right now. Restart the app and try again.',
+      };
+    },
+
+    async chatSend(): Promise<ChatReply> {
+      throw new Error(
+        'VYRA started with limited capabilities, so chat is unavailable right now. Restart the app and try again.',
+      );
     },
 
     async onboardingState() {

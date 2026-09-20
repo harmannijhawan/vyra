@@ -2,12 +2,21 @@
  * Assistant view — the heart of VYRA: orb, status line, task input,
  * voice controls, live activity feed and the computer preview.
  */
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { VoiceState, VOICE_STATE_PHRASES, type ActivityPayload, type AgentEvent } from '@vyra/shared';
 import { Orb } from '../components/Orb';
 import { ActivityFeed } from '../components/ActivityFeed';
 import { ComputerPreview } from '../components/ComputerPreview';
-import { interruptSpeech, pushToTalk, startTask, voiceStart, voiceStop, VyraError } from '../api';
+import {
+  interruptSpeech,
+  pushToTalk,
+  sendChatMessage,
+  startTask,
+  voiceStart,
+  voiceStop,
+  VyraError,
+} from '../api';
+import type { ChatMessageInput } from '../../main/services.js';
 
 interface AssistantViewProps {
   voiceState: VoiceState;
@@ -21,9 +30,18 @@ export function AssistantView({ voiceState, activities, visible, onTaskStarted }
   const [starting, setStarting] = useState(false);
   const [pttHeld, setPttHeld] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'chat' | 'task'>('chat');
+  const [messages, setMessages] = useState<ChatMessageInput[]>([]);
+  const [sending, setSending] = useState(false);
+  const [bottomTab, setBottomTab] = useState<'chat' | 'activity'>('chat');
+  const threadRef = useRef<HTMLDivElement>(null);
 
   const listening = voiceState === VoiceState.LISTENING;
   const speaking = voiceState === VoiceState.SPEAKING;
+
+  useEffect(() => {
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
+  }, [messages, sending]);
 
   const submitGoal = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
@@ -34,11 +52,32 @@ export function AssistantView({ voiceState, activities, visible, onTaskStarted }
     try {
       await startTask(trimmed);
       setGoal('');
+      setBottomTab('activity');
       onTaskStarted();
     } catch (err) {
       setError(err instanceof VyraError ? err.message : 'Could not start that task.');
     } finally {
       setStarting(false);
+    }
+  };
+
+  const submitChat = async (e: FormEvent): Promise<void> => {
+    e.preventDefault();
+    const trimmed = goal.trim();
+    if (!trimmed || sending) return;
+    const next: ChatMessageInput[] = [...messages, { role: 'user', content: trimmed }];
+    setMessages(next);
+    setGoal('');
+    setSending(true);
+    setError(null);
+    setBottomTab('chat');
+    try {
+      const reply = await sendChatMessage(next);
+      setMessages((prev) => [...prev, { role: 'assistant', content: reply.text }]);
+    } catch (err) {
+      setError(err instanceof VyraError ? err.message : 'Could not reach VYRA.');
+    } finally {
+      setSending(false);
     }
   };
 
@@ -131,20 +170,41 @@ export function AssistantView({ voiceState, activities, visible, onTaskStarted }
             )}
           </div>
 
-          <form onSubmit={submitGoal} className="mt-5 w-full">
+          <form onSubmit={mode === 'chat' ? submitChat : submitGoal} className="mt-5 w-full">
+            <div className="mb-2 flex rounded-lg border border-white/10 bg-black/40 p-0.5 text-xs">
+              {(
+                [
+                  { id: 'chat', label: 'Chat' },
+                  { id: 'task', label: 'Task' },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setMode(t.id)}
+                  className={`flex-1 rounded-md px-3 py-1.5 transition ${
+                    mode === t.id
+                      ? 'bg-vyra-accent/25 text-slate-100'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <div className="flex gap-2">
               <input
                 value={goal}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => setGoal(e.target.value)}
-                placeholder="Tell VYRA what to do…"
+                placeholder={mode === 'chat' ? 'Chat with VYRA…' : 'Tell VYRA what to do…'}
                 className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-vyra-accent focus:outline-none"
               />
               <button
                 type="submit"
-                disabled={!goal.trim() || starting}
+                disabled={!goal.trim() || starting || sending}
                 className="flex-none rounded-lg bg-vyra-accent px-4 py-2.5 text-sm font-medium text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {starting ? '…' : 'Go'}
+                {starting || sending ? '…' : mode === 'chat' ? 'Send' : 'Go'}
               </button>
             </div>
           </form>
@@ -156,13 +216,72 @@ export function AssistantView({ voiceState, activities, visible, onTaskStarted }
         </div>
       </div>
 
-      {/* Activity feed */}
+      {/* Conversation / activity */}
       <div className="min-h-0 flex-1">
-        <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-          Activity
-        </h2>
+        <div className="mb-2 flex gap-4">
+          {(
+            [
+              { id: 'chat', label: 'Conversation' },
+              { id: 'activity', label: 'Activity' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setBottomTab(t.id)}
+              className={`text-[11px] font-semibold uppercase tracking-widest transition ${
+                bottomTab === t.id ? 'text-vyra-accent-soft' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="h-[calc(100%-1.75rem)]">
-          <ActivityFeed events={activities} />
+          {bottomTab === 'chat' ? (
+            <div
+              ref={threadRef}
+              className="flex h-full flex-col gap-3 overflow-y-auto rounded-xl border border-white/5 bg-white/[0.02] p-4"
+            >
+              {messages.length === 0 && !sending && (
+                <p className="my-auto text-center text-sm text-slate-500">
+                  Say hello — VYRA replies here, powered by your connected AI.
+                </p>
+              )}
+              {messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                      m.role === 'user'
+                        ? 'bg-vyra-accent/90 text-white'
+                        : 'border border-white/10 bg-white/[0.04] text-slate-200'
+                    }`}
+                  >
+                    {m.content}
+                  </div>
+                </div>
+              ))}
+              {sending && (
+                <div className="flex justify-start">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+                    <span className="flex gap-1.5" aria-label="VYRA is typing">
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
+                      <span
+                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                        style={{ animationDelay: '0.15s' }}
+                      />
+                      <span
+                        className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                        style={{ animationDelay: '0.3s' }}
+                      />
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <ActivityFeed events={activities} />
+          )}
         </div>
       </div>
     </div>

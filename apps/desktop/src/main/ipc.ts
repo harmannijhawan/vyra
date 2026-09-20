@@ -25,7 +25,10 @@ import type {
   SettingsSectionPayload,
   ProviderSelectPayload,
   SafetyRespondPayload,
+  ChatSendPayload,
   OnboardingStepPayload,
+  GoogleKeyTestPayload,
+  OpenExternalPayload,
   LogsQueryPayload,
 } from '@vyra/shared';
 import { CHANNEL_SCHEMAS } from './schemas.js';
@@ -203,11 +206,21 @@ export function registerIpcHandlers(
     return { requestId, approved };
   });
 
+  // --- Chat ----------------------------------------------------------
+  handle('vyra:chat:send', async (p) => {
+    const { messages } = p as ChatSendPayload;
+    return services.chatSend(messages);
+  });
+
   // --- Onboarding ------------------------------------------------------
   handle('vyra:onboarding:get-state', async () => services.onboardingState());
   handle('vyra:onboarding:complete-step', async (p) => {
     const { step, values } = p as OnboardingStepPayload;
     return services.completeOnboardingStep(step, values);
+  });
+  handle('vyra:onboarding:test-google-key', async (p) => {
+    const { apiKey } = p as GoogleKeyTestPayload;
+    return services.testGoogleConnection(apiKey);
   });
 
   // --- Logs ------------------------------------------------------------
@@ -222,5 +235,16 @@ export function registerIpcHandlers(
     await services.quitApp();
     hooks.onQuitRequested?.();
     return { quitting: true };
+  });
+  handle('vyra:app:open-external', async (p) => {
+    const { url } = p as OpenExternalPayload;
+    // Only https URLs, opened in the user's real browser — never inside VYRA.
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      throw new Error('Only https links can be opened.');
+    }
+    const { shell } = await import('electron');
+    await shell.openExternal(parsed.toString());
+    return { opened: true };
   });
 }

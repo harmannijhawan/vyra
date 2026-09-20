@@ -72,6 +72,26 @@ export const OnboardingStepSchema = z.object({
   values: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const ChatSendSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().min(1).max(8000),
+      }),
+    )
+    .min(1)
+    .max(40),
+});
+
+export const GoogleKeyTestSchema = z.object({
+  apiKey: z.string().min(1).max(500),
+});
+
+export const OpenExternalSchema = z.object({
+  url: z.string().url().max(500),
+});
+
 export const LogsQuerySchema = z.object({
   level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
   taskId: z.string().optional(),
@@ -104,7 +124,10 @@ export const CHANNEL_SCHEMAS: Record<InvokeChannel, z.ZodTypeAny | null> = {
   'vyra:safety:respond': SafetyRespondSchema,
   'vyra:onboarding:get-state': null,
   'vyra:onboarding:complete-step': OnboardingStepSchema,
+  'vyra:onboarding:test-google-key': GoogleKeyTestSchema,
+  'vyra:chat:send': ChatSendSchema,
   'vyra:logs:query': LogsQuerySchema,
   'vyra:app:version': null,
   'vyra:app:quit': null,
+  'vyra:app:open-external': OpenExternalSchema,
 };

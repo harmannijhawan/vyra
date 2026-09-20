@@ -10,11 +10,14 @@ import type {
   Task,
 } from '@vyra/shared';
 import type {
+  ChatMessageInput,
+  ChatReply,
   ComputerFrame,
   MemoryEntry,
   OnboardingState,
   ProviderStatusInfo,
 } from '../main/services.js';
+import type { GeminiConnectionResult } from '@vyra/providers';
 import { stopPuterSpeech } from './lib/puterTts.js';
 
 export interface IpcError {
@@ -162,6 +165,31 @@ export async function completeOnboardingStep(
   values?: Record<string, unknown>,
 ): Promise<OnboardingState> {
   return invoke('vyra:onboarding:complete-step', { step, values });
+}
+
+/**
+ * Dry-run Gemini connection test — validates the key against Google's live
+ * API (key accepted + model actually generates) without saving anything.
+ */
+export async function testGoogleConnection(
+  apiKey: string,
+): Promise<GeminiConnectionResult> {
+  return invoke('vyra:onboarding:test-google-key', { apiKey });
+}
+
+/**
+ * Send chat messages to VYRA and get a real AI reply.
+ * Throws VyraError with an honest message when chat is unavailable.
+ */
+export async function sendChatMessage(
+  messages: ChatMessageInput[],
+): Promise<ChatReply> {
+  return invoke('vyra:chat:send', { messages });
+}
+
+/** Open an https URL in the user's browser. */
+export async function openExternal(url: string): Promise<void> {
+  await invoke('vyra:app:open-external', { url });
 }
 
 export async function getAppVersion(): Promise<string> {

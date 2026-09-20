@@ -14,7 +14,7 @@ import {
   type StructuredLog,
   type VoiceStatePayload,
 } from '@vyra/shared';
-import { getOnboardingState, onEvent, VyraError } from './api';
+import { getOnboardingState, getProvidersStatus, onEvent, setSettings, VyraError } from './api';
 import { useSpokenReplies } from './lib/useSpokenReplies';
 import type { OnboardingState } from '../main/services.js';
 import { AssistantView } from './views/AssistantView';
@@ -47,6 +47,7 @@ export function App(): JSX.Element {
   const [taskRefresh, setTaskRefresh] = useState(0);
   const [safetyRequests, setSafetyRequests] = useState<SafetyConfirmRequestPayload[]>([]);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [aiUnconfigured, setAiUnconfigured] = useState(false);
   const onboardingLoaded = useRef(false);
 
   // VYRA reads task results aloud (Puter/ElevenLabs) when voice output is on.
@@ -54,13 +55,42 @@ export function App(): JSX.Element {
 
   const loadOnboarding = useCallback(async () => {
     try {
-      setOnboarding(await getOnboardingState());
+      const state = await getOnboardingState();
+      setOnboarding(state);
+      if (state.completed) {
+        try {
+          const statuses = await getProvidersStatus();
+          const google = statuses.find((st) => st.kind === 'ai' && st.id === 'google');
+          setAiUnconfigured(
+            !!google && !google.available && /key/i.test(google.reason ?? ''),
+          );
+        } catch {
+          // Provider status is best-effort here; tasks report honest errors anyway.
+          setAiUnconfigured(false);
+        }
+      } else {
+        setAiUnconfigured(false);
+      }
     } catch (err) {
       // If onboarding state can't load, don't trap the user — show the app.
       console.warn('[vyra] onboarding state unavailable:', err);
       setOnboarding({ completed: true, currentStep: '', completedSteps: [] });
     }
   }, []);
+
+  /** Reopen onboarding at the Connect VYRA step to (re)connect the AI key. */
+  const reconnectAi = useCallback(async () => {
+    try {
+      await setSettings('onboarding', {
+        completed: false,
+        currentStep: 'google-api-key',
+        completedSteps: ['welcome'],
+      });
+      await loadOnboarding();
+    } catch (err) {
+      console.warn('[vyra] could not reopen onboarding:', err);
+    }
+  }, [loadOnboarding]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -193,6 +223,19 @@ export function App(): JSX.Element {
           </p>
           <p className="text-[11px] uppercase tracking-widest text-slate-600">{view}</p>
         </header>
+
+        {aiUnconfigured && (
+          <div className="flex flex-none items-center justify-between gap-4 border-b border-amber-300/20 bg-amber-400/10 px-6 py-2.5">
+            <p className="text-sm text-amber-200">Connect your AI to activate VYRA.</p>
+            <button
+              type="button"
+              onClick={() => void reconnectAi()}
+              className="flex-none rounded-lg bg-amber-300/20 px-4 py-1.5 text-xs font-medium text-amber-100 transition hover:bg-amber-300/30"
+            >
+              Connect
+            </button>
+          </div>
+        )}
 
         <main className="min-h-0 flex-1 overflow-y-auto p-6">
           {view === 'assistant' && (

@@ -1,9 +1,23 @@
 /**
- * First-run onboarding — "WELCOME TO VYRA" through setup steps to
- * "VYRA is ready." Progress persists through the onboarding IPC channels.
+ * First-run onboarding — VYRA's premium setup experience.
+ *
+ * Welcome (animated orb, brand, Get Started / Configure Later) →
+ * Connect VYRA (real Gemini key test: Test Connection dry-run + Continue
+ * that saves only after Google accepts the key and a model generates) →
+ * optional steps (microphone, voice, computer, browser, memory, shortcuts).
+ *
+ * No secrets are ever displayed back and none are stored until the live
+ * test succeeds — that guarantee lives in the main process.
  */
 import { useState, type ChangeEvent } from 'react';
-import { completeOnboardingStep, VyraError } from '../api';
+import { Orb } from '../components/Orb.js';
+import { VoiceState } from '@vyra/shared';
+import {
+  completeOnboardingStep,
+  openExternal,
+  testGoogleConnection,
+  VyraError,
+} from '../api.js';
 import type { OnboardingState } from '../../main/services.js';
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@vyra/shared';
 
@@ -15,24 +29,12 @@ interface StepDef {
 }
 
 const STEPS: StepDef[] = [
-  {
-    id: 'welcome',
-    title: 'WELCOME TO VYRA',
-    description: `${PRODUCT_TAGLINE} Let's get you set up — this takes about a minute.`,
-  },
+  { id: 'welcome', title: 'WELCOME TO VYRA', description: '' },
   {
     id: 'google-api-key',
-    title: 'Connect Google Gemini',
+    title: 'Connect VYRA',
     description:
-      'VYRA runs on Google\u2019s Gemini API. Paste your API key below — grab a free one from Google AI Studio (aistudio.google.com). VYRA checks the key with Google before continuing.',
-    fields: [
-      {
-        key: 'googleApiKey',
-        label: 'Gemini API key',
-        placeholder: 'AIza\u2026',
-        secret: true,
-      },
-    ],
+      "VYRA's intelligence runs on Google's Gemini. Paste your free API key from Google AI Studio — VYRA tests it live with Google before continuing.",
   },
   {
     id: 'microphone',
@@ -71,6 +73,8 @@ const STEPS: StepDef[] = [
   },
 ];
 
+type KeyTestState = 'idle' | 'testing' | 'success' | 'failure';
+
 interface OnboardingViewProps {
   initial: OnboardingState;
   onDone: () => void;
@@ -87,24 +91,98 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
   const [busy, setBusy] = useState(false);
   const [finished, setFinished] = useState(false);
 
+  // Google key step state — the key is never displayed back after saving.
+  const [apiKey, setApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const [testState, setTestState] = useState<KeyTestState>('idle');
+  const [testMessage, setTestMessage] = useState<string | null>(null);
+
   const step = STEPS[index];
   const isLast = index === STEPS.length - 1;
 
-  const complete = async (values?: Record<string, unknown>): Promise<void> => {
+  const complete = async (stepId: string, values?: Record<string, unknown>): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
-      const next = await completeOnboardingStep(step.id, values);
+      const next = await completeOnboardingStep(stepId, values);
       if (isLast || next.completed) {
         setFinished(true);
       } else {
         setIndex((i) => Math.min(i + 1, STEPS.length - 1));
         setFieldValues({});
+        setTestState('idle');
+        setTestMessage(null);
       }
     } catch (err) {
       setError(err instanceof VyraError ? err.message : 'Could not save that step.');
+      if (stepId === 'google-api-key') setTestState('failure');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** "Configure later" — finish onboarding now, leaving everything optional unset. */
+  const configureLater = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      for (let i = index; i < STEPS.length; i++) {
+        const next = await completeOnboardingStep(STEPS[i].id);
+        if (next.completed) break;
+      }
+      setFinished(true);
+    } catch (err) {
+      setError(err instanceof VyraError ? err.message : 'Could not finish setup.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Dry-run: validate the key against Google's live API without saving anything. */
+  const runTest = async (): Promise<void> => {
+    const key = apiKey.trim();
+    if (!key) {
+      setError('Paste your API key first.');
+      return;
+    }
+    setTestState('testing');
+    setTestMessage(null);
+    setError(null);
+    try {
+      const result = await testGoogleConnection(key);
+      if (result.ok) {
+        setTestState('success');
+        setTestMessage(result.model);
+      } else {
+        setTestState('failure');
+        setTestMessage(result.message);
+      }
+    } catch (err) {
+      setTestState('failure');
+      setTestMessage(
+        err instanceof VyraError
+          ? err.message
+          : 'The test could not run. Check your connection and try again.',
+      );
+    }
+  };
+
+  const continueWithKey = (): void => {
+    const key = apiKey.trim();
+    if (!key) {
+      setError('Paste your API key first — or skip for now.');
+      return;
+    }
+    // The main process re-tests live and saves ONLY on success.
+    void complete('google-api-key', { googleApiKey: key });
+  };
+
+  const onApiKeyChange = (value: string): void => {
+    setApiKey(value);
+    // A changed key invalidates any earlier test result.
+    if (testState === 'success' || testState === 'failure') {
+      setTestState('idle');
+      setTestMessage(null);
     }
   };
 
@@ -114,7 +192,7 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
       const v = fieldValues[f.key]?.trim();
       if (v) values[f.key] = v;
     }
-    void complete(values);
+    void complete(step.id, values);
   };
 
   if (finished) {
@@ -135,24 +213,200 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
     );
   }
 
+  // --- Welcome -------------------------------------------------------------
+  if (step.id === 'welcome') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-8 text-center">
+        <Orb state={VoiceState.IDLE} size={200} />
+        <h1 className="mt-10 text-5xl font-light tracking-[0.35em] text-slate-100">VYRA</h1>
+        <p className="mt-4 text-sm tracking-wide text-slate-400">{PRODUCT_TAGLINE}</p>
+        <p className="mt-2 text-sm text-slate-500">Your intelligent desktop companion.</p>
+        <div className="mt-12 flex flex-col items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void complete('welcome')}
+            disabled={busy}
+            className="rounded-xl bg-vyra-accent px-12 py-3 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+          >
+            {busy ? 'Starting…' : 'Get Started'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void configureLater()}
+            disabled={busy}
+            className="px-4 py-2 text-sm text-slate-500 transition hover:text-slate-300 disabled:opacity-50"
+          >
+            Configure Later
+          </button>
+        </div>
+        {error && <p className="mt-6 text-sm text-red-300">{error}</p>}
+      </div>
+    );
+  }
+
+  // --- Connect VYRA (Google AI Studio key) ---------------------------------
+  if (step.id === 'google-api-key') {
+    const testing = testState === 'testing';
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-8">
+        <div className="w-full max-w-lg">
+          <div className="mb-8 flex items-center justify-center gap-2">
+            {STEPS.slice(1).map((s, i) => (
+              <span
+                key={s.id}
+                className={`h-1.5 flex-1 rounded-full transition ${
+                  i < index ? 'bg-vyra-accent' : 'bg-white/10'
+                }`}
+              />
+            ))}
+          </div>
+
+          <h1 className="text-center text-3xl font-light tracking-wide text-slate-100">
+            Connect VYRA
+          </h1>
+          <p className="mx-auto mt-4 max-w-md text-center text-sm leading-relaxed text-slate-400">
+            {step.description}
+          </p>
+
+          <div className="mx-auto mt-6 max-w-md">
+            <label className="text-xs text-slate-400" htmlFor="vyra-api-key">
+              Google AI Studio API key
+            </label>
+            <div className="relative mt-1">
+              <input
+                id="vyra-api-key"
+                type={showKey ? 'text' : 'password'}
+                autoComplete="off"
+                spellCheck={false}
+                value={apiKey}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => onApiKeyChange(e.target.value)}
+                placeholder="AIza…"
+                disabled={testing || busy}
+                className="w-full rounded-lg border border-white/10 bg-black/40 py-2 pl-3 pr-24 text-sm text-slate-100 placeholder:text-slate-600 focus:border-vyra-accent focus:outline-none disabled:opacity-60"
+              />
+              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                {apiKey.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onApiKeyChange('')}
+                    disabled={testing || busy}
+                    aria-label="Clear API key"
+                    title="Clear"
+                    className="rounded px-1.5 py-1 text-sm text-slate-500 transition hover:text-slate-200 disabled:opacity-50"
+                  >
+                    ✕
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowKey((v) => !v)}
+                  disabled={testing || busy}
+                  className="rounded px-2 py-1 text-xs text-slate-400 transition hover:text-slate-200 disabled:opacity-50"
+                >
+                  {showKey ? 'Hide' : 'Show'}
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void openExternal('https://aistudio.google.com')}
+              className="mt-2 text-xs text-vyra-accent-soft transition hover:text-vyra-accent"
+            >
+              Get a free key at Google AI Studio ↗
+            </button>
+
+            {testState === 'testing' && (
+              <div className="mt-4 flex items-center gap-3 rounded-lg border border-white/10 bg-black/30 px-4 py-3">
+                <span className="h-4 w-4 flex-none animate-spin rounded-full border-2 border-vyra-accent border-t-transparent" />
+                <p className="text-sm text-slate-300">Connecting to VYRA&apos;s intelligence…</p>
+              </div>
+            )}
+            {testState === 'success' && (
+              <div className="mt-4 rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-4 py-3">
+                <p className="text-sm text-emerald-200">Connection successful — VYRA is ready.</p>
+                {testMessage && (
+                  <p className="mt-1 text-xs text-emerald-200/70">Verified live with {testMessage}.</p>
+                )}
+              </div>
+            )}
+            {testState === 'failure' && (
+              <div className="mt-4 rounded-lg border border-red-400/30 bg-red-400/10 px-4 py-3">
+                <p className="text-sm text-red-200">{testMessage ?? 'The connection failed.'}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTestState('idle');
+                    setTestMessage(null);
+                  }}
+                  className="mt-2 text-xs text-red-200/80 underline transition hover:text-red-200"
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              Your key stays on this device, encrypted. It is only ever sent to Google.
+            </p>
+          </div>
+
+          {error && <p className="mt-4 text-center text-sm text-red-300">{error}</p>}
+
+          <div className="mt-8 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIndex((i) => i - 1)}
+              disabled={testing || busy}
+              className="rounded-xl border border-white/15 px-6 py-2.5 text-sm text-slate-300 transition hover:bg-white/5 disabled:opacity-50"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => void runTest()}
+              disabled={testing || busy || apiKey.trim().length === 0}
+              className="rounded-xl border border-vyra-accent/60 px-6 py-2.5 text-sm text-vyra-accent-soft transition hover:bg-vyra-accent/10 disabled:opacity-50"
+            >
+              Test Connection
+            </button>
+            <button
+              type="button"
+              onClick={continueWithKey}
+              disabled={testing || busy}
+              className="rounded-xl bg-vyra-accent px-8 py-2.5 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+            >
+              {busy ? 'Verifying…' : 'Continue'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void complete('google-api-key')}
+              disabled={testing || busy}
+              className="px-4 py-2.5 text-sm text-slate-500 transition hover:text-slate-300 disabled:opacity-50"
+            >
+              Skip for now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Generic optional steps ----------------------------------------------
   return (
     <div className="flex h-full flex-col items-center justify-center p-8">
       <div className="w-full max-w-lg">
         <div className="mb-8 flex items-center justify-center gap-2">
-          {STEPS.map((s, i) => (
+          {STEPS.slice(1).map((s, i) => (
             <span
               key={s.id}
               className={`h-1.5 flex-1 rounded-full transition ${
-                i <= index ? 'bg-vyra-accent' : 'bg-white/10'
+                i < index ? 'bg-vyra-accent' : 'bg-white/10'
               }`}
             />
           ))}
         </div>
 
-        <p className="text-center text-[11px] font-semibold uppercase tracking-[0.3em] text-vyra-accent-soft">
-          Step {index + 1} of {STEPS.length}
-        </p>
-        <h1 className="mt-3 text-center text-3xl font-light tracking-wide text-slate-100">
+        <h1 className="text-center text-3xl font-light tracking-wide text-slate-100">
           {step.title}
         </h1>
         <p className="mx-auto mt-4 max-w-md text-center text-sm leading-relaxed text-slate-400">
@@ -204,7 +458,7 @@ export function OnboardingView({ initial, onDone }: OnboardingViewProps): JSX.El
           {!isLast && (
             <button
               type="button"
-              onClick={() => void complete()}
+              onClick={() => void complete(step.id)}
               disabled={busy}
               className="px-4 py-2.5 text-sm text-slate-500 transition hover:text-slate-300 disabled:opacity-50"
             >

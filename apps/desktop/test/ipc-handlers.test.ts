@@ -49,6 +49,15 @@ function stubServices(overrides: Partial<MainServices> = {}): MainServices {
       currentStep: step,
       completedSteps: [step],
     }),
+    testGoogleConnection: async () => ({
+      ok: false as const,
+      code: 'unknown' as const,
+      message: 'not wired',
+    }),
+    chatSend: async (messages: Array<{ role: 'user' | 'assistant'; content: string }>) => ({
+      text: `echo: ${messages.map((m) => m.content).join(' ')}`,
+      model: 'test-model',
+    }),
     queryLogs: async () => [],
     getVersion: async () => '0.1.0',
     quitApp: async () => {},

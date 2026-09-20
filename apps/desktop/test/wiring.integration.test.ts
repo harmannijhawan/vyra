@@ -132,12 +132,37 @@ describe('real backend wiring (wiring.ts)', () => {
 
   it('onboarding: google-api-key step validates live, persists securely, selects Google', async () => {
     const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
+    const prevModel = process.env.VYRA_AI_MODEL;
     const secretsFile = join(userDataDir, 'secrets.json');
     const settingsFile = join(userDataDir, 'settings.json');
-    // Google accepts the key (stubbed network).
-    vi.stubGlobal('fetch', async () => ({ ok: true, status: 200 }) as Response);
+    // Google accepts the key AND the resolved model really generates
+    // (stubbed network — both legs of the real connection test).
+    vi.stubGlobal('fetch', async (url: unknown) => {
+      if (String(url).includes(':generateContent')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ candidates: [{ content: { parts: [{ text: 'VYRA-OK' }] } }] }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            models: [
+              {
+                name: 'models/gemini-2.5-flash',
+                supportedGenerationMethods: ['generateContent'],
+              },
+            ],
+          }),
+      } as Response;
+    });
     try {
       delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      delete process.env.VYRA_AI_MODEL;
       const { rmSync, readFileSync, existsSync } = await import('node:fs');
       try { rmSync(secretsFile); } catch { /* fresh */ }
       const state = await services.completeOnboardingStep('google-api-key', {
@@ -149,8 +174,13 @@ describe('real backend wiring (wiring.ts)', () => {
       expect(process.env.GOOGLE_GENERATIVE_AI_KEY).toBe('AIza-test-key-123');
       // …persisted to a secrets file…
       expect(existsSync(secretsFile)).toBe(true);
-      const secrets = JSON.parse(readFileSync(secretsFile, 'utf8')) as Record<string, string>;
-      expect(secrets.GOOGLE_GENERATIVE_AI_KEY).toBe('AIza-test-key-123');
+      const rawSecrets = readFileSync(secretsFile, 'utf8');
+      expect(rawSecrets).toContain('GOOGLE_GENERATIVE_AI_KEY');
+      // The working model is remembered for future launches…
+      expect(process.env.VYRA_AI_MODEL).toBe('gemini-2.5-flash');
+      expect((await services.getSettingsSection('models')).defaultModel).toBe(
+        'gemini-2.5-flash',
+      );
       // …but never in settings.json, which the renderer can read.
       expect(readFileSync(settingsFile, 'utf8')).not.toContain('AIza-test-key-123');
       // …and Google is now VYRA's selected brain and eyes.
@@ -163,12 +193,63 @@ describe('real backend wiring (wiring.ts)', () => {
       try { rmSync(secretsFile); } catch { /* cleaned */ }
       if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_KEY;
       else process.env.GOOGLE_GENERATIVE_AI_KEY = prevKey;
+      if (prevModel === undefined) delete process.env.VYRA_AI_MODEL;
+      else process.env.VYRA_AI_MODEL = prevModel;
+    }
+  });
+
+  it('chat: selecting Google after startup routes chat to Google (no stale provider)', async () => {
+    // Regression test for the "valid key, still broken" bug: the AI provider
+    // used to be captured once at startup, so a provider selected later
+    // (during onboarding) never took effect. chatSend must resolve the
+    // selected provider on every call.
+    const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: 'Hello from Gemini.' }] } }],
+        }),
+    }) as Response);
+    try {
+      process.env.GOOGLE_GENERATIVE_AI_KEY = 'test-key-for-chat';
+      // Select Google AFTER the services (and Brain) were already built.
+      await services.selectProvider('ai', 'google');
+      const reply = await services.chatSend([{ role: 'user', content: 'hello' }]);
+      expect(reply.text).toBe('Hello from Gemini.');
+      expect(typeof reply.model).toBe('string');
+    } finally {
+      vi.unstubAllGlobals();
+      if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      else process.env.GOOGLE_GENERATIVE_AI_KEY = prevKey;
+    }
+  });
+
+  it('chat: an honest error when no AI provider is available', async () => {
+    const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
+    const prevOpenAI = process.env.OPENAI_API_KEY;
+    try {
+      delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      delete process.env.OPENAI_API_KEY;
+      // Nothing selected and no keys: whichever default provider resolves
+      // must report itself honestly instead of fabricating a reply.
+      await expect(services.chatSend([{ role: 'user', content: 'hi' }])).rejects.toThrow();
+    } finally {
+      if (prevKey === undefined) delete process.env.GOOGLE_GENERATIVE_AI_KEY;
+      else process.env.GOOGLE_GENERATIVE_AI_KEY = prevKey;
+      if (prevOpenAI === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prevOpenAI;
     }
   });
 
   it('onboarding: a Google-rejected API key surfaces an honest error', async () => {
     const prevKey = process.env.GOOGLE_GENERATIVE_AI_KEY;
-    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401 }) as Response);
+    vi.stubGlobal('fetch', async () => ({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ error: { message: 'API key not valid.' } }),
+    }) as Response);
     try {
       delete process.env.GOOGLE_GENERATIVE_AI_KEY;
       await expect(

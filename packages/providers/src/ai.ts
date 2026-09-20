@@ -624,3 +624,309 @@ export type AnyAIProvider =
   | AnthropicProvider
   | GoogleProvider
   | OllamaProvider;
+
+/* ------------------------------------------------------------------ */
+/* Google connection test — REAL, used by onboarding and Settings       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Why a Gemini connection test failed. The UI maps these to human-readable
+ * explanations; raw HTTP details never reach the user on their own.
+ */
+export type GeminiFailureCode =
+  | 'invalid-key'
+  | 'model-not-found'
+  | 'rate-limited'
+  | 'network'
+  | 'timeout'
+  | 'cancelled'
+  | 'unknown';
+
+export interface GeminiConnectionSuccess {
+  ok: true;
+  /** The model id that actually generated a response for this key. */
+  model: string;
+}
+
+export interface GeminiConnectionFailure {
+  ok: false;
+  code: GeminiFailureCode;
+  /** Human-readable, safe to show directly in the UI. */
+  message: string;
+}
+
+export type GeminiConnectionResult =
+  | GeminiConnectionSuccess
+  | GeminiConnectionFailure;
+
+export interface GeminiModelInfo {
+  /** Full resource name, e.g. "models/gemini-3-flash-preview". */
+  name: string;
+  supportedGenerationMethods?: string[];
+}
+
+/**
+ * Pure: map a failed Gemini HTTP call to a human-readable failure.
+ * `status` is null when no HTTP response arrived at all.
+ * Never exposes raw stack traces or key material.
+ */
+export function geminiFailureMessage(
+  status: number | null,
+  detail: string,
+): Omit<GeminiConnectionFailure, 'ok'> {
+  if (status === null) {
+    return {
+      code: 'network',
+      message:
+        'Could not reach Google. Check your internet connection and try again.',
+    };
+  }
+  if (status === 400 || status === 401 || status === 403) {
+    return {
+      code: 'invalid-key',
+      message:
+        'Google rejected that API key. Grab a fresh one from Google AI Studio (aistudio.google.com) and try again.',
+    };
+  }
+  if (status === 404) {
+    return {
+      code: 'model-not-found',
+      message: `That Gemini model is not available for this key (${detail}). Test the connection again and VYRA will pick a working model automatically.`,
+    };
+  }
+  if (status === 429) {
+    return {
+      code: 'rate-limited',
+      message:
+        'Google is rate-limiting this key right now. Wait a minute and try again.',
+    };
+  }
+  if (status >= 500) {
+    return {
+      code: 'unknown',
+      message: `Google's API had a problem (HTTP ${status}). Try again in a moment.`,
+    };
+  }
+  return {
+    code: 'unknown',
+    message: `Google answered with HTTP ${status}${detail ? ` (${detail})` : ''}. Try again.`,
+  };
+}
+
+/**
+ * Pure: pick the best text-generation model from a models.list response.
+ * Prefers the requested model when it supports generateContent; otherwise
+ * prefers Flash-class models (fast + cheap), then Pro, skipping image / TTS /
+ * live / embedding-only variants. Returns undefined when nothing can
+ * generate text.
+ */
+export function pickGeminiModel(
+  models: GeminiModelInfo[],
+  preferred?: string,
+): string | undefined {
+  const short = (name: string): string => name.replace(/^models\//, '');
+  const generative = models.filter((m) =>
+    m.supportedGenerationMethods?.includes('generateContent'),
+  );
+  if (preferred) {
+    const hit = generative.find((m) => short(m.name) === preferred);
+    if (hit) return short(hit.name);
+  }
+  const excluded = /image|live|tts|embed|aqa|vision/i;
+  const rank = (name: string): number => {
+    const s = name.toLowerCase();
+    if (s.includes('flash') && !s.includes('lite')) return 0;
+    if (s.includes('flash-lite') || s.includes('flash_lite')) return 1;
+    if (s.includes('pro')) return 2;
+    return 3;
+  };
+  const candidates = generative
+    .map((m) => short(m.name))
+    .filter((n) => n.length > 0 && !excluded.test(n))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return candidates[0];
+}
+
+export interface TestGeminiOptions {
+  /** Preferred model id (without the "models/" prefix). */
+  model?: string;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+interface GeminiRawResult {
+  status: number | null;
+  body: string;
+  timedOut: boolean;
+  networkError: boolean;
+  cancelled: boolean;
+}
+
+async function geminiRequest(
+  url: string,
+  opts: {
+    timeoutMs: number;
+    signal?: AbortSignal;
+    method?: string;
+    body?: string;
+  },
+): Promise<GeminiRawResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+  const onExternalAbort = (): void => controller.abort();
+  opts.signal?.addEventListener('abort', onExternalAbort);
+  try {
+    const res = await fetch(url, {
+      method: opts.method ?? 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: opts.body,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return {
+      status: res.status,
+      body: text,
+      timedOut: false,
+      networkError: false,
+      cancelled: false,
+    };
+  } catch (err) {
+    const cancelled = opts.signal?.aborted === true;
+    const timedOut =
+      !cancelled && err instanceof Error && err.name === 'AbortError';
+    return {
+      status: null,
+      body: '',
+      timedOut,
+      networkError: !timedOut && !cancelled,
+      cancelled,
+    };
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+/**
+ * REAL Gemini connection test: proves a key is accepted by Google AND that
+ * the resolved model actually generates text for it. Never throws — every
+ * failure mode comes back as a structured, human-readable result.
+ *
+ * Step 1: GET /v1beta/models — validates the key itself.
+ * Step 2: pick the best generateContent-capable model from the live list.
+ * Step 3: POST a minimal generateContent — validates the model works.
+ */
+export async function testGeminiConnection(
+  apiKey: string,
+  opts: TestGeminiOptions = {},
+): Promise<GeminiConnectionResult> {
+  const key = apiKey.trim();
+  if (!key) {
+    return {
+      ok: false,
+      code: 'invalid-key',
+      message: 'Paste your Gemini API key first.',
+    };
+  }
+  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const base = 'https://generativelanguage.googleapis.com/v1beta';
+
+  // --- Step 1: the key itself ------------------------------------------------
+  const listed = await geminiRequest(
+    `${base}/models?key=${encodeURIComponent(key)}`,
+    { timeoutMs, signal: opts.signal },
+  );
+  if (listed.cancelled) {
+    return { ok: false, code: 'cancelled', message: 'Test cancelled.' };
+  }
+  if (listed.timedOut) {
+    return {
+      ok: false,
+      code: 'timeout',
+      message:
+        'Google took too long to answer. Check your connection and try again.',
+    };
+  }
+  if (listed.networkError) {
+    return { ok: false, ...geminiFailureMessage(null, '') };
+  }
+  if (listed.status !== 200) {
+    return {
+      ok: false,
+      ...geminiFailureMessage(listed.status, listed.body.slice(0, 200)),
+    };
+  }
+
+  // --- Step 2: resolve a model that can actually generate -------------------
+  let models: GeminiModelInfo[] = [];
+  try {
+    const parsed = JSON.parse(listed.body) as { models?: unknown };
+    if (Array.isArray(parsed.models)) {
+      models = parsed.models.filter(
+        (m): m is GeminiModelInfo =>
+          isRecord(m) &&
+          typeof m.name === 'string' &&
+          (m.supportedGenerationMethods === undefined ||
+            (Array.isArray(m.supportedGenerationMethods) &&
+              m.supportedGenerationMethods.every((x) => typeof x === 'string'))),
+      );
+    }
+  } catch {
+    models = [];
+  }
+  const model = pickGeminiModel(models, opts.model);
+  if (!model) {
+    return {
+      ok: false,
+      code: 'model-not-found',
+      message:
+        "Google accepted the key but listed no text-generation models for it. Check the key's API restrictions in Google AI Studio.",
+    };
+  }
+
+  // --- Step 3: prove the model generates for this key -----------------------
+  const generated = await geminiRequest(
+    `${base}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      timeoutMs,
+      signal: opts.signal,
+      method: 'POST',
+      body: JSON.stringify({
+        contents: [
+          { role: 'user', parts: [{ text: 'Reply with exactly: VYRA-OK' }] },
+        ],
+        generationConfig: { maxOutputTokens: 16 },
+      }),
+    },
+  );
+  if (generated.cancelled) {
+    return { ok: false, code: 'cancelled', message: 'Test cancelled.' };
+  }
+  if (generated.timedOut) {
+    return {
+      ok: false,
+      code: 'timeout',
+      message: `The model ${model} took too long to answer. Try again.`,
+    };
+  }
+  if (generated.networkError) {
+    return {
+      ok: false,
+      code: 'network',
+      message: 'Lost connection to Google while testing. Try again.',
+    };
+  }
+  if (generated.status !== 200) {
+    return { ok: false, ...geminiFailureMessage(generated.status, model) };
+  }
+  try {
+    googleToAIResponse(JSON.parse(generated.body) as unknown);
+  } catch {
+    return {
+      ok: false,
+      code: 'unknown',
+      message: `The model ${model} answered, but VYRA could not understand the reply. Try again.`,
+    };
+  }
+  return { ok: true, model };
+}

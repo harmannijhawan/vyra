@@ -31,7 +31,7 @@ import {
   VoiceService,
 } from '@vyra/voice';
 import { SessionContext, SQLiteMemory } from '@vyra/memory';
-import { createDefaultRegistry, loadEnvConfig } from '@vyra/providers';
+import { createDefaultRegistry, loadEnvConfig, testGeminiConnection, type GeminiConnectionResult } from '@vyra/providers';
 import { JsonlLogger } from '@vyra/observability';
 import { SafetyPolicy } from '@vyra/safety';
 import {
@@ -43,12 +43,16 @@ import {
   type BrowserProvider,
   type ChatMessage,
   type ComputerProvider,
+  type ProviderCapability,
   type ProviderKind,
+  type ProviderRegistry,
   type ToolExecutor,
   type VisionProvider,
 } from '@vyra/shared';
 import {
   DEFAULT_SETTINGS,
+  type ChatMessageInput,
+  type ChatReply,
   type ComputerFrame,
   type EmitEvent,
   type MainServices,
@@ -56,6 +60,12 @@ import {
   type OnboardingState,
   type ProviderStatusInfo,
 } from './services.js';
+import { electronEncryptor, SecretStore } from './secrets.js';
+
+/**
+ * Secrets live in the main process only, encrypted with Electron safeStorage
+ * (DPAPI on Windows) whenever encryption is available. See secrets.ts.
+ */
 
 const ONBOARDING_STEPS = [
   'welcome',
@@ -78,70 +88,71 @@ const PROVIDER_KINDS: ProviderKind[] = [
   'wakeword',
 ];
 
+/** What VYRA says about itself in conversational chat. */
+const VYRA_CHAT_SYSTEM_PROMPT =
+  "You are VYRA, the user's personal AI running on their own PC. " +
+  'Be warm, concise, and direct — no fluff, no filler openers. ' +
+  'Answer questions, explain things, write and debug code, and help with anything they ask. ' +
+  'If they ask you to operate their computer (open apps, click, type, automate tasks), ' +
+  'briefly say what you would do: real computer actions run as Tasks, started with the Task toggle.';
+
 /**
- * API keys live in the main process only. They are persisted in a
- * mode-600 `secrets.json` under the data directory (never in settings.json,
- * never in logs, never sent to the renderer) and loaded back into
- * `process.env` at startup so providers pick them up via readSecret().
+ * Resolves the selected AI provider on EVERY call instead of capturing it
+ * once at startup. Capturing it once was the "valid Gemini key, still
+ * broken" bug: onboarding selected Google after the Brain was already
+ * built around the startup default.
  */
-const SECRETS_FILE = 'secrets.json';
+class LazyVisionProvider implements VisionProvider {
+  readonly id = 'selected-vision';
+  readonly displayName = 'Selected vision provider';
 
-function secretsPath(dataDir: string): string {
-  return path.join(dataDir, SECRETS_FILE);
-}
+  constructor(private readonly registry: ProviderRegistry) {}
 
-function loadPersistedSecrets(dataDir: string): void {
-  try {
-    const raw = fs.readFileSync(secretsPath(dataDir), 'utf8');
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const [name, value] of Object.entries(parsed)) {
-      if (typeof value === 'string' && value.length > 0 && !process.env[name]) {
-        process.env[name] = value;
-      }
+  private current(): VisionProvider | undefined {
+    return this.registry.get<VisionProvider>('vision');
+  }
+
+  async checkAvailability(): Promise<ProviderCapability> {
+    const current = this.current();
+    if (!current) {
+      return {
+        available: false,
+        reason: 'No vision provider is configured.',
+      };
     }
-  } catch {
-    // No secrets saved yet — providers will honestly report missing keys.
+    return current.checkAvailability();
+  }
+
+  analyzeScreenshot(
+    png: Buffer | Uint8Array,
+  ): ReturnType<VisionProvider['analyzeScreenshot']> {
+    const current = this.current();
+    if (!current) {
+      return Promise.reject(new Error('No vision provider is configured.'));
+    }
+    return current.analyzeScreenshot(png);
   }
 }
 
-function persistSecret(dataDir: string, name: string, value: string): void {
-  let existing: Record<string, unknown> = {};
-  try {
-    existing = JSON.parse(
-      fs.readFileSync(secretsPath(dataDir), 'utf8'),
-    ) as Record<string, unknown>;
-  } catch {
-    // No secrets file yet — start fresh.
-  }
-  existing[name] = value;
-  fs.writeFileSync(secretsPath(dataDir), JSON.stringify(existing), {
-    mode: 0o600,
-  });
-}
+class LazyAIProvider implements AIProvider {
+  readonly id = 'selected-ai';
+  readonly displayName = 'Selected AI provider';
 
-/**
- * Live-check a Gemini API key against Google's model list. Never throws:
- * returns 'ok' when Google accepts the key, 'invalid' when Google rejects
- * it, and 'unknown' when the check itself could not run (offline, timeout).
- */
-async function validateGoogleApiKey(
-  key: string,
-): Promise<'ok' | 'invalid' | 'unknown'> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`,
-      { signal: controller.signal },
-    );
-    if (res.ok) return 'ok';
-    if (res.status === 400 || res.status === 401 || res.status === 403)
-      return 'invalid';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  } finally {
-    clearTimeout(timeout);
+  constructor(private readonly registry: ProviderRegistry) {}
+
+  private current(): AIProvider {
+    return this.registry.get<AIProvider>('ai') ?? new NoAiProvider();
+  }
+
+  checkAvailability(): Promise<ProviderCapability> {
+    return this.current().checkAvailability();
+  }
+
+  chat(
+    messages: ChatMessage[],
+    opts?: Parameters<AIProvider['chat']>[1],
+  ): Promise<AIResponse> {
+    return this.current().chat(messages, opts);
   }
 }
 
@@ -221,12 +232,22 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   const dataDir = env.dataDir || app.getPath('userData');
   fs.mkdirSync(dataDir, { recursive: true });
 
+  // Secrets are encrypted at rest (Electron safeStorage / DPAPI on Windows).
   // Keys saved during onboarding are loaded before providers are built,
   // so a saved key takes effect on every launch without re-entering it.
-  loadPersistedSecrets(dataDir);
+  const secretStore = new SecretStore(dataDir, electronEncryptor());
+  secretStore.applyToEnv();
 
   const logger = new JsonlLogger({ dataDir, component: 'vyra-main' });
   const settings = new FileSettingsStore(path.join(dataDir, 'settings.json'));
+
+  // A model resolved by a previous successful connection test wins over the
+  // built-in default (an explicit VYRA_AI_MODEL env var still wins overall).
+  // GoogleProvider reads this lazily per request, so order doesn't matter.
+  const savedModel = settings.getSection('models').defaultModel;
+  if (typeof savedModel === 'string' && savedModel.length > 0 && !process.env.VYRA_AI_MODEL) {
+    process.env.VYRA_AI_MODEL = savedModel;
+  }
 
   const timedEmit: EmitEvent = (event: AgentEvent) => emit(event);
   const untimedEmit = (event: Omit<AgentEvent, 'timestamp'>) =>
@@ -250,9 +271,8 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   const browser =
     providers.get<BrowserProvider>('browser') ??
     new PlaywrightBrowserProvider();
-  const aiProvider =
-    providers.get<AIProvider>('ai') ?? new NoAiProvider();
-  const visionProvider = providers.get<VisionProvider>('vision');
+  const aiProvider = new LazyAIProvider(providers);
+  const visionProvider = new LazyVisionProvider(providers);
 
   // --- Safety + tool registry ----------------------------------------------
   const toolDefinitions = new Map<string, { risk: string }>();
@@ -519,6 +539,54 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
       safety.handleResponse(requestId, approved);
     },
 
+    async testGoogleConnection(apiKey: string): Promise<GeminiConnectionResult> {
+      // Dry-run only: validates the key + model against Google's live API
+      // without saving anything. Powers the "Test Connection" button.
+      return testGeminiConnection(apiKey.trim());
+    },
+
+    async chatSend(messages: ChatMessageInput[]): Promise<ChatReply> {
+      // Conversational chat: straight to the selected AI provider, no task
+      // engine, no tool-plan JSON. The lazy provider above guarantees the
+      // selection from onboarding/Settings is honored immediately.
+      const provider = providers.get<AIProvider>('ai') ?? new NoAiProvider();
+      const capability = await provider.checkAvailability();
+      if (!capability.available) {
+        throw new Error(
+          capability.reason ??
+            'VYRA has no working AI provider right now. Connect your AI key to continue.',
+        );
+      }
+      const history: ChatMessage[] = [
+        { role: 'system', content: VYRA_CHAT_SYSTEM_PROMPT },
+        ...messages.slice(-20).map((m) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+      ];
+      let text: string;
+      try {
+        const response = await provider.chat(history, {
+          temperature: 0.7,
+          maxTokens: 1024,
+        });
+        text = response.text.trim();
+      } catch (err) {
+        const { message } = asErrorCode(err);
+        throw new Error(message || 'VYRA could not reach the AI. Try again.');
+      }
+      if (!text) {
+        throw new Error('VYRA came back with an empty reply. Try asking again.');
+      }
+      const savedModel = settings.getSection('models').defaultModel;
+      const model =
+        process.env.VYRA_AI_MODEL ||
+        (typeof savedModel === 'string' ? savedModel : '') ||
+        'unknown';
+      logger.info('chat.send', { result: `model=${model} chars=${text.length}` });
+      return { text, model };
+    },
+
     async onboardingState() {
       return getOnboarding();
     },
@@ -528,23 +596,30 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
         const apiKey = values.googleApiKey;
         if (typeof apiKey === 'string' && apiKey.trim().length > 0) {
           const key = apiKey.trim();
-          const verdict = await validateGoogleApiKey(key);
-          if (verdict === 'invalid') {
-            throw Object.assign(
-              new Error(
-                'Google rejected that API key. Grab a fresh one from Google AI Studio (aistudio.google.com) and try again.',
-              ),
-              { code: 'INVALID_API_KEY' },
-            );
+          // REAL test: the key must be accepted by Google AND the resolved
+          // model must actually generate text. Nothing is saved until both
+          // pass — an untested key never becomes VYRA's brain.
+          const preferred =
+            typeof values.preferredModel === 'string' && values.preferredModel.length > 0
+              ? values.preferredModel
+              : undefined;
+          const result = await testGeminiConnection(key, { model: preferred });
+          if (!result.ok) {
+            throw Object.assign(new Error(result.message), {
+              code: 'GEMINI_' + result.code.toUpperCase().replace(/-/g, '_'),
+            });
           }
-          // The key works (or the check could not run offline) — keep it in
-          // the main process only, and make Google VYRA's brain and eyes.
+          // The key works — keep it in the main process only (encrypted at
+          // rest), remember the working model, and make Google VYRA's brain
+          // and eyes.
           process.env.GOOGLE_GENERATIVE_AI_KEY = key;
-          persistSecret(dataDir, 'GOOGLE_GENERATIVE_AI_KEY', key);
+          secretStore.set('GOOGLE_GENERATIVE_AI_KEY', key);
+          process.env.VYRA_AI_MODEL = result.model;
+          settings.setSection('models', { defaultModel: result.model });
           await services.selectProvider('ai', 'google');
           await services.selectProvider('vision', 'google');
           logger.info('onboarding.google-key', {
-            result: `saved (live verification: ${verdict})`,
+            result: `saved (verified live with model ${result.model})`,
           });
         }
         for (const [k, v] of Object.entries(values)) {
