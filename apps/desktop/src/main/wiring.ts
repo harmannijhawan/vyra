@@ -29,6 +29,7 @@ import {
   TTSService,
   VoiceActivityDetector,
   VoiceService,
+  WakeWordService,
 } from '@vyra/voice';
 import { SessionContext, SQLiteMemory } from '@vyra/memory';
 import { createDefaultRegistry, loadEnvConfig, testGeminiConnection, type GeminiConnectionResult } from '@vyra/providers';
@@ -36,6 +37,8 @@ import { JsonlLogger } from '@vyra/observability';
 import { SafetyPolicy } from '@vyra/safety';
 import {
   VYRA_PHRASES,
+  VoiceState,
+  activity,
   toolFail,
   type AgentEvent,
   type AIProvider,
@@ -61,6 +64,7 @@ import {
   type ProviderStatusInfo,
 } from './services.js';
 import { electronEncryptor, SecretStore } from './secrets.js';
+import { OpenWakeWordEngine } from './wakeword-engine.js';
 
 /**
  * Secrets live in the main process only, encrypted with Electron safeStorage
@@ -253,6 +257,40 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   const untimedEmit = (event: Omit<AgentEvent, 'timestamp'>) =>
     timedEmit({ ...event, timestamp: new Date().toISOString() });
 
+  // Wake-word task tracking: command transcripts heard after "Vira" become
+  // real tasks; when a watched task reaches a terminal state the orb goes
+  // back to idle. Filled in by the wake-word section further below.
+  const wakeWatchedTasks = new Set<string>();
+  const WAKE_TERMINAL_STATES = new Set(['COMPLETED', 'FAILED', 'CANCELLED']);
+  const watchWakeTask = (event: AgentEvent): void => {
+    if (event.type !== 'task.status') return;
+    const taskId = (event as { taskId?: string }).taskId;
+    if (!taskId || !wakeWatchedTasks.has(taskId)) return;
+    const to = (event.payload as { to?: string } | undefined)?.to;
+    if (!to || !WAKE_TERMINAL_STATES.has(to)) return;
+    wakeWatchedTasks.delete(taskId);
+    untimedEmit({
+      type: 'voice.state',
+      payload: { from: VoiceState.THINKING, to: VoiceState.IDLE },
+    });
+    untimedEmit(
+      activity(
+        to === 'COMPLETED' ? 'Done.' : 'That task did not finish.',
+        to === 'COMPLETED' ? 'success' : 'warning',
+      ),
+    );
+  };
+  /** Every internal event flows through here so wake tasks can be watched. */
+  const busEmit = (event: AgentEvent | Omit<AgentEvent, 'timestamp'>): void => {
+    const timed = (
+      'timestamp' in event && typeof event.timestamp === 'string'
+        ? event
+        : { ...event, timestamp: new Date().toISOString() }
+    ) as AgentEvent;
+    watchWakeTask(timed);
+    emit(timed);
+  };
+
   // --- Providers -----------------------------------------------------------
   const providerSettings = {
     get: (key: string) => {
@@ -345,13 +383,13 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
     vision: visionProvider ?? undefined,
     computer,
     userFacts,
-    onEvent: untimedEmit,
+    onEvent: busEmit,
   });
 
   const engine = await TaskEngine.create({
     store: new FileTaskStore(path.join(dataDir, 'tasks')),
     registry: toolRegistry,
-    onEvent: (event) => timedEmit(event),
+    onEvent: busEmit,
   });
 
   const runTaskInBackground = async (goal: string, context?: Record<string, unknown>) => {
@@ -410,6 +448,147 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
       return VYRA_PHRASES.working;
     },
   });
+
+  // --- Wake word ---------------------------------------------------------------
+  // "Vira" detection runs fully offline in a Python helper (openWakeWord);
+  // the transcript of the command spoken right after becomes a real task.
+  // Nothing is uploaded anywhere.
+  const wakeModelsDir = path.join(dataDir, 'wakeword');
+  fs.mkdirSync(wakeModelsDir, { recursive: true });
+
+  const readWakePhrase = (): string => {
+    const raw = String(settings.getSection('voice').wakeWord ?? 'vira');
+    return raw.trim().toLowerCase() || 'vira';
+  };
+
+  /** The wake word was heard: visible event + orb goes to listening. */
+  const handleWake = (): void => {
+    const phrase = wakeEngine.getPhrase();
+    logger.info('wakeword.detect', { result: `heard "${phrase}"` });
+    untimedEmit({
+      type: 'voice.state',
+      payload: { from: VoiceState.IDLE, to: VoiceState.LISTENING },
+    });
+    untimedEmit(
+      activity(`Heard "${phrase}" — listening for your command.`, 'info'),
+    );
+  };
+
+  /** A command spoken after the wake word: run it as a real task. */
+  const handleWakeCommand = async (text: string): Promise<void> => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      untimedEmit(
+        activity("Didn't catch that — say the wake word and try again.", 'info'),
+      );
+      untimedEmit({
+        type: 'voice.state',
+        payload: { from: VoiceState.LISTENING, to: VoiceState.IDLE },
+      });
+      return;
+    }
+    const shown =
+      trimmed.length > 120 ? `${trimmed.slice(0, 120)}…` : trimmed;
+    logger.info('wakeword.command', { result: shown });
+    untimedEmit(activity(`Heard: "${shown}"`, 'info'));
+    untimedEmit({
+      type: 'voice.state',
+      payload: { from: VoiceState.LISTENING, to: VoiceState.THINKING },
+    });
+    try {
+      const task = await runTaskInBackground(trimmed);
+      wakeWatchedTasks.add(task.id);
+    } catch (err) {
+      const { message } = asErrorCode(err);
+      logger.error('wakeword.task', {
+        result: 'failed to start',
+        error: { code: 'WAKEWORD_TASK_FAILED', message },
+      });
+      untimedEmit(activity('VYRA could not start that task.', 'error', message));
+      untimedEmit({
+        type: 'voice.state',
+        payload: { from: VoiceState.THINKING, to: VoiceState.IDLE },
+      });
+    }
+  };
+
+  const handleWakeEngineError = (message: string): void => {
+    logger.error('wakeword.error', {
+      result: 'listener error',
+      error: { code: 'WAKEWORD_ERROR', message },
+    });
+    untimedEmit(activity('Wake word ran into a problem.', 'error', message));
+    untimedEmit({
+      type: 'voice.state',
+      payload: { from: VoiceState.LISTENING, to: VoiceState.IDLE },
+    });
+  };
+
+  const wakeEngine = new OpenWakeWordEngine({
+    modelsDir: wakeModelsDir,
+    phrase: readWakePhrase(),
+    onCommand: (text) => {
+      void handleWakeCommand(text);
+    },
+    onEngineError: handleWakeEngineError,
+  });
+  const wakeWordService = new WakeWordService({
+    detector: wakeEngine,
+    wakeWord: readWakePhrase(),
+    enabled: settings.getSection('voice').wakeWordEnabled === true,
+  });
+  providers.register('wakeword', wakeWordService);
+
+  /**
+   * (Re)apply the voice settings to the wake-word listener. Safe to call
+   * repeatedly: keeps a healthy listener running, restarts it when the
+   * phrase changed, stops it when disabled. Failures are reported in the
+   * activity feed and the log — never thrown, never silent.
+   */
+  const reapplyWakeWord = async (): Promise<void> => {
+    const enabled = settings.getSection('voice').wakeWordEnabled === true;
+    const phrase = readWakePhrase();
+    const phraseChanged = wakeEngine.getPhrase() !== phrase;
+    wakeWordService.setWakeWord(phrase);
+    wakeWordService.setEnabled(enabled);
+    wakeEngine.setPhrase(phrase);
+    wakeEngine.setPythonPath(
+      String(settings.getSection('voice').wakeWordPython ?? '').trim() || undefined,
+    );
+    const rawThreshold = Number(settings.getSection('voice').wakeWordThreshold);
+    const thresholdChanged =
+      Number.isFinite(rawThreshold) &&
+      rawThreshold > 0 &&
+      rawThreshold <= 1 &&
+      wakeEngine.getThreshold() !== rawThreshold;
+    if (thresholdChanged) wakeEngine.setThreshold(rawThreshold);
+    if (!enabled) {
+      await wakeWordService.stopListening().catch(() => {
+        // Best-effort: disabling must never throw.
+      });
+      return;
+    }
+    if (wakeEngine.isRunning() && !phraseChanged && !thresholdChanged) return;
+    if (wakeEngine.isRunning()) {
+      await wakeWordService.stopListening().catch(() => {});
+    }
+    try {
+      await wakeWordService.startListening(handleWake);
+      logger.info('wakeword.start', { result: `listening for "${phrase}"` });
+      untimedEmit(
+        activity(`Wake word on — say "${phrase}" any time.`, 'info'),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error('wakeword.start', {
+        result: 'failed',
+        error: { code: 'WAKEWORD_START_FAILED', message },
+      });
+      untimedEmit(
+        activity('Wake word could not start.', 'warning', message),
+      );
+    }
+  };
 
   // --- Memory ----------------------------------------------------------------
   // (created above so the Brain can read identity facts at startup)
@@ -482,6 +661,30 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
     },
     async interruptSpeech() {
       await voiceService.interrupt();
+    },
+
+    async wakeWordStart() {
+      await reapplyWakeWord();
+    },
+    async wakeWordStop() {
+      await wakeWordService.stopListening().catch(() => {
+        // Best-effort: stopping must never throw.
+      });
+    },
+    async wakeWordStatus() {
+      const capability = await wakeWordService
+        .checkAvailability()
+        .catch(() => ({ available: false as const, reason: 'Unknown error.' }));
+      return {
+        enabled: wakeWordService.isEnabled(),
+        listening: wakeWordService.isListening(),
+        phrase: wakeWordService.getWakeWord(),
+        engine: wakeWordService.getDetectorName(),
+        available: capability.available,
+        ...(!capability.available && capability.reason
+          ? { reason: capability.reason }
+          : {}),
+      };
     },
 
     async memoryRemember(key, value, category) {

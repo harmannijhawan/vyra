@@ -48,7 +48,7 @@ const STEPS: StepDef[] = [
     description: 'Pick how you summon VYRA: hold the push-to-talk hotkey, or say the wake word.',
     fields: [
       { key: 'pushToTalkHotkey', label: 'Push-to-talk hotkey', placeholder: 'CommandOrControl+Shift+V' },
-      { key: 'wakeWord', label: 'Wake word', placeholder: 'hey vyra' },
+      { key: 'wakeWord', label: 'Wake word', placeholder: 'vira' },
     ],
   },
   {

@@ -63,6 +63,17 @@ export interface OnboardingState {
 
 export type EmitEvent = (event: AgentEvent) => void;
 
+/** Wake-word listener status, for the Settings UI. */
+export interface WakeWordStatus {
+  enabled: boolean;
+  listening: boolean;
+  phrase: string;
+  engine: string | null;
+  available: boolean;
+  /** Required when available === false. Shown verbatim in Settings. */
+  reason?: string;
+}
+
 export interface MainServices {
   // Tasks
   startTask(goal: string, context?: Record<string, unknown>): Promise<{ taskId: string }>;
@@ -74,6 +85,10 @@ export interface MainServices {
   voiceStop(): Promise<void>;
   pushToTalk(active: boolean): Promise<void>;
   interruptSpeech(): Promise<void>;
+  // Wake word
+  wakeWordStart(): Promise<void>;
+  wakeWordStop(): Promise<void>;
+  wakeWordStatus(): Promise<WakeWordStatus>;
   // Memory
   memoryRemember(key: string, value: string, category?: string): Promise<void>;
   memoryRecall(query?: string, category?: string, limit?: number): Promise<MemoryEntry[]>;
@@ -118,7 +133,7 @@ export const DEFAULT_SETTINGS: Record<string, Record<string, unknown>> = {
     pushToTalkEnabled: true,
     pushToTalkHotkey: 'CommandOrControl+Shift+V',
     wakeWordEnabled: false,
-    wakeWord: 'hey vyra',
+    wakeWord: 'vira',
     interruptibleSpeech: true,
     speechRate: 1.0,
   },
@@ -230,6 +245,25 @@ export function createInMemoryServices(emit: EmitEvent): MainServices {
     },
     async interruptSpeech() {
       log('voice.interrupt');
+    },
+
+    async wakeWordStart() {
+      throw new Error(
+        'Wake word is unavailable: VYRA started with limited capabilities. Restart the app and try again.',
+      );
+    },
+    async wakeWordStop() {
+      // No-op: the in-memory fallback never starts the listener.
+    },
+    async wakeWordStatus(): Promise<WakeWordStatus> {
+      return {
+        enabled: false,
+        listening: false,
+        phrase: 'vira',
+        engine: null,
+        available: false,
+        reason: 'VYRA started with limited capabilities.',
+      };
     },
 
     async memoryRemember(key, value, category) {

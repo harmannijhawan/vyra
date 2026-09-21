@@ -31,6 +31,12 @@ files:
 asarUnpack:
   - '**/*.node'
 
+# The offline wake-word listener (Python helper) ships next to the app so
+# the main process can spawn it: <install>/resources/vyra-python/*.py.
+extraResources:
+  - from: python
+    to: vyra-python
+
 win:
   target:
     - target: nsis

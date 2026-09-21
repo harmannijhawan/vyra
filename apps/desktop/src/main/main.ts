@@ -10,7 +10,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain } from 'electron';
 import path from 'node:path';
 import { registerIpcHandlers } from './ipc.js';
-import { createInMemoryServices, type EmitEvent } from './services.js';
+import { createInMemoryServices, type EmitEvent, type MainServices } from './services.js';
 import { createRealServices } from './wiring.js';
 import type { AgentEvent } from '@vyra/shared';
 
@@ -25,6 +25,8 @@ const DEV_SERVER_URL = 'http://localhost:5173';
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let mainWindow: BrowserWindow | null = null;
+/** Set once bootstrap() builds the backend; used to stop the mic on quit. */
+let servicesRef: MainServices | null = null;
 
 /** Forward one AgentEvent to every renderer window (single multiplexed channel). */
 function broadcast(event: AgentEvent): void {
@@ -184,6 +186,14 @@ async function bootstrap(): Promise<void> {
     onSettingsChanged: (section) => {
       if (section === 'voice') {
         void applyVoiceHotkey();
+        // Re-apply the wake-word listener (enable/disable/phrase change).
+        // Failures surface in the activity feed; they never throw here.
+        void services.wakeWordStart().catch((err: unknown) => {
+          console.warn(
+            '[vyra] wake-word reapply failed:',
+            err instanceof Error ? err.message : err,
+          );
+        });
       }
     },
     onQuitRequested: () => {
@@ -197,6 +207,17 @@ async function bootstrap(): Promise<void> {
 
   // Initial hotkey registration from stored settings.
   await applyVoiceHotkey();
+
+  // Start the wake-word listener when enabled in settings. Best-effort:
+  // a missing model or microphone is reported in the activity feed,
+  // never a boot crash.
+  servicesRef = services;
+  void services.wakeWordStart().catch((err: unknown) => {
+    console.warn(
+      '[vyra] wake-word start failed:',
+      err instanceof Error ? err.message : err,
+    );
+  });
 
   createWindow();
 
@@ -216,4 +237,10 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  // Release the microphone: the wake-word helper is a child process and
+  // would otherwise keep listening after the app closes. The kill itself
+  // is synchronous; no need to await.
+  void servicesRef?.wakeWordStop().catch(() => {
+    // Best-effort on the way out.
+  });
 });
