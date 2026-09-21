@@ -3,4 +3,5 @@
  * plus in-memory session context for VYRA.
  */
 export * from './memory.js';
+export * from './fallback.js';
 export * from './session.js';

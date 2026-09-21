@@ -66,11 +66,13 @@ function loadDatabaseConstructor(): new (path: string) => SqliteDb {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     CachedDatabase = require('better-sqlite3') as new (path: string) => SqliteDb;
     return CachedDatabase;
-  } catch {
+  } catch (err) {
     loadFailed = true;
+    const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
       '[VYRA memory] better-sqlite3 is not available in this environment — ' +
-        'persistent memory cannot run. Install the "better-sqlite3" dependency to enable it.',
+        'persistent memory cannot run. Install the "better-sqlite3" dependency to enable it. ' +
+        `Underlying error: ${detail}`,
     );
   }
 }

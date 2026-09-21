@@ -31,7 +31,7 @@ import {
   VoiceService,
   WakeWordService,
 } from '@vyra/voice';
-import { SessionContext, SQLiteMemory } from '@vyra/memory';
+import { SessionContext, createMemory } from '@vyra/memory';
 import { createDefaultRegistry, loadEnvConfig, testGeminiConnection, type GeminiConnectionResult } from '@vyra/providers';
 import { JsonlLogger } from '@vyra/observability';
 import { SafetyPolicy } from '@vyra/safety';
@@ -357,8 +357,24 @@ export async function createRealServices(emit: EmitEvent): Promise<MainServices>
   // --- Brain + task engine ---------------------------------------------------
   // Long-term memory lives here; the Brain gets the user's identity facts
   // so it knows who it serves (e.g. their name) without being told twice.
-  const memory = new SQLiteMemory(path.join(dataDir, 'vyra-memory.db'), {
+  // If the SQLite native module cannot load, memory degrades to session
+  // storage LOUDLY — it never takes the whole backend down with it.
+  const memory = createMemory(path.join(dataDir, 'vyra-memory.db'), {
     emit: (event) => timedEmit(event),
+    onDegraded: (err) => {
+      logger.error('memory.degraded', {
+        result: 'persistent memory unavailable; using session memory',
+        error: { code: 'MEMORY_DEGRADED', message: err.message },
+      });
+      untimedEmit(
+        activity(
+          'Persistent memory is unavailable — using session memory instead. ' +
+            'Tasks, voice, and the wake word still work; memories will not survive a restart.',
+          'warning',
+          err.message,
+        ),
+      );
+    },
   });
   // Seed the user's identity once — never overwrites a name the user set
   // themselves through Memory tools.
