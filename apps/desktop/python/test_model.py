@@ -64,6 +64,11 @@ def main() -> int:
         return 2
 
     name = Path(args.model).stem
+    if not Path(args.model).is_file():
+        print(f"ERROR: model file not found: {args.model}", file=sys.stderr)
+        print("Build it first (step 5): open the Colab link, type 'vira',", file=sys.stderr)
+        print("run all cells, and download vira.onnx to your Downloads folder.", file=sys.stderr)
+        return 2
     oww = Model(wakeword_models=[args.model], inference_framework="onnx")
 
     print(f"model: {args.model}")
